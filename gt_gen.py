@@ -133,8 +133,8 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
 
 
 def main():
-    img_a = enhance_image(cv2.imread("sample_data/stroke_b.png"))
-    img_b = enhance_image(cv2.imread("sample_data/stroke_a.png"))
+    img_a = enhance_image(cv2.imread("sample_data/stroke_e.png"))
+    img_b = enhance_image(cv2.imread("sample_data/stroke_f.png"))
     img_b = cv2.resize(img_b, (img_a.shape[1], img_a.shape[0]))
     ret = find_stroke_transform(img_a, img_b)
     if ret is None:
