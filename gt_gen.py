@@ -42,7 +42,12 @@ def my_transform(x: np.array, params: List[float]) -> np.array:
         [0, scale_y, 0],
         [0, 0, 1]
     ], dtype=float)
-    affine_param = m_rotate @ m_trans @ m_scale  # TODO optimize
+    m_shear = np.asarray([
+        [1, shear_x, 0],
+        [shear_y, 1, 0],
+        [0, 0, 1]
+    ], dtype=float)
+    affine_param = m_rotate @ m_trans @ m_scale @ m_shear # TODO optimize
     # padding with 0
     y_ = cv2.warpAffine(x, affine_param[:2, :], (x.shape[1], x.shape[0]),
                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
@@ -83,13 +88,13 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
         """
         y_ = my_transform(x.copy(), params)
         y_ = cv2.resize(y_, (y.shape[1], y.shape[0]))
-        return np.mean((y - y_) ** 2)
+        return float(np.mean((y - y_) ** 2))
 
     # find coefficient of affine transformation using Ternary Search
-    EPS = 5e-2  # acceptable error
+    EPS = 7e-2  # acceptable error
     w, h = x.shape
     # angle is in degree, and scale is in percentage=
-    scale_range = (0.33, 3.0)
+    scale_range = (0.5, 2.0)
     height, width = x.shape
     # brute force search for approximate solution
     # it's like binary search but in 3 dimensions
@@ -99,8 +104,8 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
         (-0.52, 0.52,  0.34),  # angle from -30 deg to 30 deg but in radian
         (scale_range[0], scale_range[1], (scale_range[1] - scale_range[0]) / 3),  # scale_x
         (scale_range[0], scale_range[1], (scale_range[1] - scale_range[0]) / 3),  # scale_y
-        (-0.52, 0.52,  0.34),  # shear_x
-        (-0.52, 0.52,  0.34),  # shear_y
+        (-0.3, 0.3,  0.2),  # shear_x
+        (-0.3, 0.3,  0.2),  # shear_y
     ]
     result = None
     last_loss = np.inf
@@ -120,6 +125,8 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
             last_loss = loss
             result = _result
             print(result)
+
+            # search in smaller range with more precision
             for i, item in enumerate(result.tolist()):
                 grid[i] = (item - 0.5 * grid[i][2],
                            item + 0.5 * grid[i][2],
@@ -133,8 +140,8 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
 
 
 def main():
-    img_a = enhance_image(cv2.imread("sample_data/stroke_e.png"))
-    img_b = enhance_image(cv2.imread("sample_data/stroke_f.png"))
+    img_a = enhance_image(cv2.imread("sample_data/stroke_d.png"))
+    img_b = enhance_image(cv2.imread("sample_data/stroke_c.png"))
     img_b = cv2.resize(img_b, (img_a.shape[1], img_a.shape[0]))
     ret = find_stroke_transform(img_a, img_b)
     if ret is None:
