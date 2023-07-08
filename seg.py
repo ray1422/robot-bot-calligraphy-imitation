@@ -1,9 +1,12 @@
 
+from ast import Dict
 import math
+import queue
 from typing import List, Tuple
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import scipy
 
 
 def enhance(img: np.ndarray) -> np.ndarray:
@@ -12,12 +15,14 @@ def enhance(img: np.ndarray) -> np.ndarray:
     return: enhanced image in grayscale
     """
     img2 = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    img2 = cv2.resize(img2, (256, 256))
+    img2 = cv2.resize(img2, (256, 256))  # 256
     ret, th2 = cv2.threshold(img2, 100, 255, cv2.THRESH_BINARY_INV)
     # erode and dilation
+    # gussian kernel
+
     kernel = np.ones((3, 3), np.uint8)
-    th2 = cv2.erode(th2, kernel, iterations=2)  # 需要隨著字的不同調整
-    th2 = cv2.dilate(th2, kernel, iterations=2)  # 需要隨著字的不同調整
+    th2 = cv2.erode(th2, kernel, iterations=3)
+    th2 = cv2.dilate(th2, kernel, iterations=2)
 
     return th2
 
@@ -202,7 +207,7 @@ def smooth_angles(angles):
     for i, _ in enumerate(angles_origin):
         # tuning the window size here
         # apply gaussian filter
-        window_size = 3    # odd number
+        window_size = 1    # odd number
         kern = [math.exp(-0.5 * (x - 2)**2 / 1.5**2)
                 for x in range(window_size)]
         kern = [x / sum(kern) for x in kern]
@@ -225,6 +230,7 @@ def angle(map: List[List[str]], points_set):
     """
     my implementation
     """
+    tri_size = 5
     angles = []
     N = len(points_set)
     triangle = True
@@ -232,18 +238,20 @@ def angle(map: List[List[str]], points_set):
     # 先算各個點的內角角度
     for i in range(N):
         # 先判斷三點是否是垂直一條線(垂直無法算斜率判斷共線)
-        if (points_set[(i + 3) % N][1] == points_set[(i - 3) % N][1] == points_set[i][1]):
+        if (points_set[(i + tri_size) % N][1] == points_set[(i - tri_size) % N][1] == points_set[i][1]):
             # 內角180度
             angles.append(180.0)
             triangle = False
         # 判斷三點是否共線(算斜率不可以有垂直部分)
         else:
-            bc_x_diff = points_set[(i + 3) % N][1] - points_set[i][1]
-            bc_y_diff = points_set[(i + 3) % N][0] - points_set[i][0]
-            fc_x_diff = points_set[(i - 3) % N][1] - points_set[i][1]
-            fc_y_diff = points_set[(i - 3) % N][0] - points_set[i][0]
-            bf_x_diff = points_set[(i + 3) % N][1] - points_set[(i - 3) % N][1]
-            bf_y_diff = points_set[(i + 3) % N][0] - points_set[(i - 3) % N][0]
+            bc_x_diff = points_set[(i + tri_size) % N][1] - points_set[i][1]
+            bc_y_diff = points_set[(i + tri_size) % N][0] - points_set[i][0]
+            fc_x_diff = points_set[(i - tri_size) % N][1] - points_set[i][1]
+            fc_y_diff = points_set[(i - tri_size) % N][0] - points_set[i][0]
+            bf_x_diff = points_set[(i + tri_size) %
+                                   N][1] - points_set[(i - tri_size) % N][1]
+            bf_y_diff = points_set[(i + tri_size) %
+                                   N][0] - points_set[(i - tri_size) % N][0]
             if bc_x_diff != 0 and fc_x_diff != 0 and bf_x_diff != 0:
                 bc_m = bc_y_diff / bc_x_diff
                 fc_m = fc_y_diff / fc_x_diff
@@ -261,10 +269,10 @@ def angle(map: List[List[str]], points_set):
         if triangle == True:
             # 先判斷目前計算的三角形角度是書法字的內角還是外角
             # 先求前後兩點的中點
-            midpoint_x = (points_set[(i + 3) % N][0] +
-                          points_set[(i - 3) % N][0]) / 2
-            midpoint_y = (points_set[(i + 3) % N][1] +
-                          points_set[(i - 3) % N][1]) / 2
+            midpoint_x = (points_set[(i + tri_size) % N][0] +
+                          points_set[(i - tri_size) % N][0]) / 2
+            midpoint_y = (points_set[(i + tri_size) % N][1] +
+                          points_set[(i - tri_size) % N][1]) / 2
             # 如果中點不是整數就找附近的點判斷
             if isinstance(midpoint_x, int) != 0 and isinstance(midpoint_y, int):
                 midpoint_x += 0.5
@@ -310,17 +318,29 @@ def angle(map: List[List[str]], points_set):
 def real_C_point(C_points):
     N = len(C_points)
     real_C = []
-    seg_len = 0
-    for i in range(N-1):
-        seg_len += 1
-        x_diff = C_points[i][0] - C_points[i+1][0]
-        y_diff = C_points[i][1] - C_points[i+1][1]
-        distance = math.sqrt(x_diff**2 + y_diff**2)
-        if (distance > 5) or (i == N-2):
-            seg_len += 1
-            seg_len = seg_len // 2
-            real_C.append(C_points[i - seg_len + 1])
-            seg_len = 0
+    buf = []
+    for i, c in enumerate(C_points):
+        if len(buf) == 0:
+            buf.append(c)
+        else:
+            if (c[0] - buf[-1][0])**2 + (c[1] - buf[-1][1])**2 <= 2:
+                buf.append(c)
+            else:
+                real_C.append(buf[len(buf)//2])
+                buf = []
+    if len(buf) != 0:
+        real_C.append(buf[len(buf)//2])
+    # seg_len = 0
+    # for i in range(N-1):
+    #     seg_len += 1
+    #     x_diff = C_points[i][0] - C_points[i+1][0]
+    #     y_diff = C_points[i][1] - C_points[i+1][1]
+    #     distance = math.sqrt(x_diff**2 + y_diff**2)
+    #     if (distance > 5) or (i == N-2):
+    #         seg_len += 1
+    #         seg_len = seg_len // 2
+    #         real_C.append(C_points[i - seg_len + 1])
+    #         seg_len = 0
 
     return real_C
 
@@ -364,6 +384,8 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
 
     C_points = []
     outer_angle = angle(map, outer_sorted_points)
+    # det_angle = max(sorted(outer_angle)[-len(outer_angle)//30], 180)
+    # print(f"{det_angle=}")
     for i in range(len(outer_angle)):
         if (outer_angle[i] > 220):  # 220
             C_points.append(
@@ -397,7 +419,7 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
                             (inter_sorted_points[k][0], inter_sorted_points[k][1]))
                     inter_angle = angle(map, inter_sorted_points)
                     for k in range(len(inter_angle)):
-                        if (inter_angle[k] > 220):  # 220
+                        if (inter_angle[k] > 180):  # 220
                             # map[inter_sorted_dict[inter_array_name][i][0]][inter_sorted_dict[inter_array_name][i][1]] = 'C'
                             C_points.append(
                                 (inter_sorted_points[k][0], inter_sorted_points[k][1]))
@@ -412,6 +434,7 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
     # print(C_points)
     # 將一區中多個C點取中間點一個當real C point
     real_C = real_C_point(C_points)
+    # real_C = C_points
     # del real_C[:] 刪除所有real_C
     print(real_C)
 
@@ -429,6 +452,71 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
         print()
 
     return map, real_C, all_points
+
+
+def find_corr_candidate_pts(tangent_pts, c_pts) -> List[Tuple[List[int], float]]:
+    DISTANCE_THRESHOLD = 10
+    """
+    @param tangent_pts: list of (x, y) points on tangent line
+    @param c_pts: list of (x, y) points on C points
+    @return: List of [x, y] points on C points and distance to tangent line
+    """
+    ret = []
+    if (len(tangent_pts) < 10):
+        return []
+    xs, ys = zip(*tangent_pts)
+    # vertical line
+    if abs(xs[0] - xs[-1]) < 1:
+        return [([x, y], abs(x - xs[0])) for x, y in c_pts if abs(x - xs[0]) < DISTANCE_THRESHOLD
+                and np.min([np.linalg.norm([p-x, q-y]) for p, q in zip(xs, ys)]) > 1]
+
+    # y = mx + y0
+    # ax + by + c = 0
+    a = (ys[-1] - ys[0]) / (xs[-1] - xs[0])
+    b = -1
+    c = ys[0] - a * xs[0]
+    d = abs(a * np.array(c_pts)[:, 0] + b * np.array(c_pts)
+            [:, 1] + c) / np.sqrt(a ** 2 + b ** 2)
+    return [([x, y], d) for (x, y), d in zip(c_pts, d)
+            if d < DISTANCE_THRESHOLD and np.min([np.linalg.norm([p-x, q-y]) for p, q in zip(xs, ys)]) > 1]
+
+
+def find_pair_c_pts(all_points: List[Tuple[int, int]], c_pts: List[Tuple[int, int]]):
+    """
+    find_pair_c_pts finds corresponding C points by minimum distance from tangent line to C points
+    """
+
+    # c pts is stored in [x, y]
+
+    # key: C point. value: list of (corresponding C point candidates, distance)
+    REF_PTS = 64
+    corresponding_c_pts: Dict[Tuple[int, int],
+                              List[Tuple[List[int, int], float]]] = {}
+    corresponding_c_pts = {pt: [] for pt in c_pts}
+
+    search_pts = all_points[-REF_PTS:] + all_points + all_points[:REF_PTS]
+
+    for i, pt in enumerate(search_pts):
+        # find soften tangent line iteratively
+        if pt in corresponding_c_pts:
+            if i < 5 or i > len(search_pts) - REF_PTS:
+                print("ignore wrapped C point")
+                continue
+
+            cand_pts = find_corr_candidate_pts(search_pts[i-REF_PTS:i], c_pts)
+            corresponding_c_pts[pt] += cand_pts
+            print(f"cand_pts for {pt} :", cand_pts)
+
+    for i, pt in enumerate(reversed(search_pts)):
+        # find soften tangent line iteratively
+        if pt in corresponding_c_pts:
+            if i < 5 or i > len(search_pts) - REF_PTS:
+                print("ignore wrapped C point")
+                continue
+
+            cand_pts = find_corr_candidate_pts(search_pts[i-REF_PTS:i], c_pts)
+            corresponding_c_pts[pt] += cand_pts
+            print(f"cand_pts for {pt} :", cand_pts)
 
 
 # 判斷水平跟垂直關係的距離也要判斷(需調整距離參數)還有判斷垂直跟水平的斜率差參數也需調整
@@ -571,12 +659,14 @@ def sub_contour_cut_same(img: np.ndarray, order) -> List[np.ndarray]:
             edge = edge_detection(sub_contour)
             _, real_C, _ = order_point_and_find_Cpoints(edge, sub_contour)
             if len(real_C) == 0:
-                # cv2.imwrite(f"sub_contour_same{order}.png", sub_contour)
-                # cv2.imwrite(f"sub_contour0_same{order}.png", edge)
-                cv2.imwrite(f"output_{order}.png", sub_contour)
-                cv2.imwrite(f"output0_{order}.png", edge)
+                # cv2.imwrite(f"./seg_output_tmp/sub_contour_same{order}.png", sub_contour)
+                # cv2.imwrite(f"./seg_output_tmp/sub_contour0_same{order}.png", edge)
+                cv2.imwrite(
+                    f"./seg_output_tmp/output_{order}.png", sub_contour)
+                cv2.imwrite(f"./seg_output_tmp/output0_{order}.png", edge)
                 inverted_img = ~sub_contour
-                cv2.imwrite(f"output1_{order}.png", inverted_img)
+                cv2.imwrite(
+                    f"./seg_output_tmp/output1_{order}.png", inverted_img)
                 # Fill the corresponding region in the original image with black
                 img[y:y+h, x:x+w] = 0
                 order += 1
@@ -604,17 +694,19 @@ def sub_contour_cut_parallel(img: np.ndarray, co_linear, parallel, C_point, orde
             _, real_C, _ = order_point_and_find_Cpoints(edge, sub_contour)
             if len(real_C) == 0:  # 因為C-points準確率的問題所以有些就先不考慮
                 if w - h > 20:  # 判斷為長方形(橫線)
-                    # cv2.imwrite(f"sub_contour_parallel{order}.png", sub_contour)
-                    # cv2.imwrite(f"sub_contour0_parallel{order}.png", edge)
-                    cv2.imwrite(f"output_{order}.png", sub_contour)
-                    cv2.imwrite(f"output0_{order}.png", edge)
+                    # cv2.imwrite(f"./seg_output_tmp/sub_contour_parallel{order}.png", sub_contour)
+                    # cv2.imwrite(f"./seg_output_tmp/sub_contour0_parallel{order}.png", edge)
+                    cv2.imwrite(
+                        f"./seg_output_tmp/output_{order}.png", sub_contour)
+                    cv2.imwrite(f"./seg_output_tmp/output0_{order}.png", edge)
                     inverted_img = ~sub_contour
-                    cv2.imwrite(f"output1_{order}.png", inverted_img)
+                    cv2.imwrite(
+                        f"./seg_output_tmp/output1_{order}.png", inverted_img)
                     # Fill the corresponding region in the original image with black
                     img[y:y+h, x:x+w] = 0
                     order += 1
         ret.clear()
-    cv2.imwrite("1.png", img)
+    cv2.imwrite("./seg_output_tmp/1.png", img)
     filled_img = img
 
     # 要判斷是不是有切斷的地方
@@ -678,10 +770,12 @@ def sub_contour_cut_co_linear(img: np.ndarray, order) -> List[np.ndarray]:
             if len(real_C) == 0:  # 因為C-points準確率的問題所以有些就先不考慮
                 if (h - w) > 20:  # 判斷為長方形(直線)
 
-                    cv2.imwrite(f"output_{order}.png", sub_contour)
-                    cv2.imwrite(f"output0_{order}.png", edge)
+                    cv2.imwrite(
+                        f"./seg_output_tmp/output_{order}.png", sub_contour)
+                    cv2.imwrite(f"./seg_output_tmp/output0_{order}.png", edge)
                     inverted_img = ~sub_contour
-                    cv2.imwrite(f"output1_{order}.png", inverted_img)
+                    cv2.imwrite(
+                        f"./seg_output_tmp/output1_{order}.png", inverted_img)
                     # Fill the corresponding region in the original image with black
                     img[y:y+h, x:x+w] = 0
                     order += 1
@@ -706,10 +800,10 @@ def sub_contour_cut_no_class(img: np.ndarray, order) -> List[np.ndarray]:
         ret.append(mask[y-5:y+h+5, x-5:x+w+5])
         for _, sub_contour in enumerate(ret):
             edge = edge_detection(sub_contour)
-            cv2.imwrite(f"output_{order}.png", sub_contour)
-            cv2.imwrite(f"output0_{order}.png", edge)
+            cv2.imwrite(f"./seg_output_tmp/output_{order}.png", sub_contour)
+            cv2.imwrite(f"./seg_output_tmp/output0_{order}.png", edge)
             inverted_img = ~sub_contour
-            cv2.imwrite(f"output1_{order}.png", inverted_img)
+            cv2.imwrite(f"./seg_output_tmp/output1_{order}.png", inverted_img)
             # Fill the corresponding region in the original image with black
             img[y:y+h, x:x+w] = 0
             order += 1
@@ -893,16 +987,34 @@ def cut_and_connect(img: np.ndarray, co_linear, parallel, same_sub_correspond, n
 def main():
     img = cv2.imread("sample_data/zuo.jpg")  # sample_data/syun.jpg
     img = enhance(img)
-    # cv2.imwrite("./enhanced.png", img)  # outputs/enhanced.png
+    # cv2.imwrite("./seg_output_tmp/./enhanced.png", img)  # outputs/enhanced.png
     cons = sub_contour(img)
     # 輸出切割後的筆畫順序
     order = 0
     for i, con in enumerate(cons):
-
         edge = edge_detection(con)
-        cv2.imwrite(f"./tmp0_{i}.png", con)  # outputs/tmp_{i}.png
-        cv2.imwrite(f"./tmp_{i}.png", edge)  # outputs/tmp_{i}.png
+        # outputs/tmp_{i}.png
+        cv2.imwrite(f"./seg_output_tmp/./tmp0_{i}.png", con)
+        # outputs/tmp_{i}.png
+        cv2.imwrite(f"./seg_output_tmp/./tmp_{i}.png", edge)
         map, real_C, all_point = order_point_and_find_Cpoints(edge, con)
+        # DEBUG HERE
+        print("DEBUG HERE")
+        print(real_C)
+        print(map)
+        print(all_point)
+        pts = np.asarray(all_point, np.int32)
+        pts = pts.reshape((-1, 1, 2))
+        max_edge_len = max([max(x, y) for x, y in all_point])
+        img = np.zeros((max_edge_len + 5, max_edge_len + 5, 3), np.uint8)
+        cv2.polylines(img, [pts], True, (255, 255, 255))
+        # circle c points as red with sutable size
+        for c in real_C:
+            cv2.circle(img, (c[0], c[1]), max_edge_len // 100, (255, 0, 0), -1)
+
+        plt.imshow(img, cmap='gray')
+        find_pair_c_pts(all_point, real_C)
+        plt.show()
         co_linear, parallel, same_sub_correspond, no_in_class = classify_C_point(
             map, real_C)
         order = cut_and_connect(
@@ -969,7 +1081,7 @@ def Douglas_Peucker(points_set):
 
     rotated_image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
 
-    # cv2.imwrite("Douglas_Peucker.png", rotated_image)
+    # cv2.imwrite("./seg_output_tmp/Douglas_Peucker.png", rotated_image)
 
     return rotated_image
 
