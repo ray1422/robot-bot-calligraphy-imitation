@@ -1,8 +1,9 @@
-
-from ast import Dict
+import heapq
+import logging
+import random
 import math
 import queue
-from typing import List, Tuple
+from typing import List, Tuple, Set, Dict
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
@@ -14,15 +15,17 @@ def enhance(img: np.ndarray) -> np.ndarray:
     params img: input image
     return: enhanced image in grayscale
     """
+    # remove noise
     img2 = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    img2 = cv2.medianBlur(img2, 5)
     img2 = cv2.resize(img2, (256, 256))  # 256
     ret, th2 = cv2.threshold(img2, 100, 255, cv2.THRESH_BINARY_INV)
     # erode and dilation
     # gussian kernel
 
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     th2 = cv2.erode(th2, kernel, iterations=3)
-    th2 = cv2.dilate(th2, kernel, iterations=2)
+    th2 = cv2.dilate(th2, kernel, iterations=3)
 
     return th2
 
@@ -41,7 +44,7 @@ def sub_contour(img: np.ndarray) -> List[np.ndarray]:
             continue
         x, y, w, h = cv2.boundingRect(mask)
         # should apply bounding check in the future.
-        ret.append(mask[y-5:y+h+5, x-5:x+w+5])
+        ret.append(mask[y - 5:y + h + 5, x - 5:x + w + 5])
     return ret
 
 
@@ -55,31 +58,33 @@ def edge_detection(img: np.ndarray) -> np.ndarray:
     return edge
 
 
-def dfs_outer_sort_points(map: List[List[str]], row: int, col: int, visited: List[List[bool]], outer_sorted_points: List[Tuple[int, int]], step: int):
+def dfs_outer_sort_points_bak(c_map: List[List[str]], row: int, col: int, visited: List[List[bool]],
+                              outer_sorted_points: List[Tuple[int, int]], step: int):
     # 上、下、左、右、斜對角
     # 逆時針排序
     directions = [(-1, 0), (0, -1), (1, 0), (0, 1),
                   (-1, -1), (1, -1), (1, 1), (-1, 1)]
     visited[row][col] = True
     outer_sorted_points.append((row, col))
-    map[row][col] = str(step[0])  # 標記已經走過的點
+
     for direction in directions:
         new_row = row + direction[0]
         new_col = col + direction[1]
         # 檢查新的位置是否越界且未訪問過
-        if 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and map[new_row][new_col] == '.' and not visited[new_row][new_col]:
+        if 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and c_map[new_row][new_col] == '.' and not \
+                visited[new_row][new_col]:
             step[0] += 1
             if step[0] == 10:
                 step[0] = 0  # 歸零(比較好看)
-            if (map[row][col+1] == '@'):  # 確定正確方向後就改回來
-                map[row][col+1] = '.'
-            if (map[row-1][col+1] == '@'):
-                map[row-1][col+1] = '.'
-            if (map[row+1][col+1] == '@'):
-                map[row+1][col+1] = '.'
-            dfs_outer_sort_points(map, new_row, new_col,
-                                  visited, outer_sorted_points, step)
-        elif 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and new_row == row - 1 and new_col == col + 1:
+            if (c_map[row][col + 1] == '@'):  # 確定正確方向後就改回來
+                c_map[row][col + 1] = '.'
+            if (c_map[row - 1][col + 1] == '@'):
+                c_map[row - 1][col + 1] = '.'
+            if (c_map[row + 1][col + 1] == '@'):
+                c_map[row + 1][col + 1] = '.'
+            dfs_outer_sort_points_bak(c_map, new_row, new_col,
+                                      visited, outer_sorted_points, step)
+        elif 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and new_row == row - 1 and new_col == col + 1:
             # 要擴大到第二層搜尋
             two_level_directions = [(-2, 0), (0, -2), (2, 0), (0, 2), (-2, -1), (-1, -2), (1, -2),
                                     (2, -1), (2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -2), (2, -2), (2, 2), (-2, 2)]
@@ -87,73 +92,173 @@ def dfs_outer_sort_points(map: List[List[str]], row: int, col: int, visited: Lis
                 new_row = row + two_level_direction[0]
                 new_col = col + two_level_direction[1]
                 # 檢查新的位置是否越界且未訪問過
-                if 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and map[new_row][new_col] == '.' and not visited[new_row][new_col]:
+                if 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and c_map[new_row][new_col] == '.' and not \
+                        visited[new_row][new_col]:
                     step[0] += 1
                     if step[0] == 10:
                         step[0] = 0  # 歸零(比較好看)
-                    if (map[row][col+1] == '@'):  # 確定正確方向後就改回來
-                        map[row][col+1] = '.'
-                    if (map[row-1][col+1] == '@'):
-                        map[row-1][col+1] = '.'
-                    if (map[row+1][col+1] == '@'):
-                        map[row+1][col+1] = '.'
-                    dfs_outer_sort_points(
-                        map, new_row, new_col, visited, outer_sorted_points, step)
+                    if (c_map[row][col + 1] == '@'):  # 確定正確方向後就改回來
+                        c_map[row][col + 1] = '.'
+                    if (c_map[row - 1][col + 1] == '@'):
+                        c_map[row - 1][col + 1] = '.'
+                    if (c_map[row + 1][col + 1] == '@'):
+                        c_map[row + 1][col + 1] = '.'
+                    dfs_outer_sort_points_bak(
+                        c_map, new_row, new_col, visited, outer_sorted_points, step)
 
 
-def dfs_outer_sort_map(map: List[List[str]]) -> List[Tuple[int, int]]:
-    rows = len(map)
-    cols = len(map[0])
-    visited = [[False] * cols for _ in range(rows)]
-    outer_sorted_points = []
-    step = [0]
-    jump_two_level = False  # 跳出兩層迴圈
+def find_outer_sorted_points(c_map: List[List[str]], row, col, pts=None, vis=None, step=0):
+    start_pt = row, col
+    if vis is None:
+        vis = set()
+    if pts is None:
+        pts = []
+    # dijkstra
+    path_traceback = {}
+    directions = [(-1, 0), (0, -1), (1, 0), (0, 1),
+                  (-1, -1), (1, -1), (1, 1), (-1, 1),
+                  (-2, 0), (0, -2), (2, 0), (0, 2),
+                  (-2, -1), (-1, -2), (1, -2), (2, -1),
+                  (2, 1), (1, 2), (-1, 2), (-2, 1),
+                  (-2, -2), (2, -2), (2, 2), (-2, 2)]
+    # sort directions counter-clockwise
+    directions = sorted(directions, key=lambda x: math.atan2(x[1], x[0]))
+    # priority queue
+    my_queue = []
+    ret = []
+
+    # find two point connected to start point.
+    # let one be the first point and the other be the last point
+    pt_cnt = 0
+    new_start_pt, end_pt = None, None
+    for dx, dy in directions:
+        new_row = row + dx
+        new_col = col + dy
+        if 0 <= new_row < len(c_map) and \
+                0 <= new_col < len(c_map[0]) and \
+                c_map[new_row][new_col] == '.':
+            pt_cnt += 1
+            if pt_cnt == 1:
+                new_start_pt = new_row, new_col
+            elif pt_cnt == 2:
+                end_pt = new_row, new_col
+                break
+    if pt_cnt < 2:
+        return []
+
+    heapq.heappush(my_queue, (0, start_pt, new_start_pt))
+    vis.add(start_pt)
+    dist_min_accepted = 10
+    while len(my_queue) > 0:
+        # distance is defined as L1 distance of directions and a little bit with order if directions
+        dist, (from_row, from_col), (row, col) = heapq.heappop(my_queue)
+        path_traceback[(row, col)] = (from_row, from_col)
+
+        if (row, col) == end_pt:
+            if dist < dist_min_accepted:
+                # treat as invalid path
+                continue
+            # process path_traceback
+            pts = []
+            cur = end_pt
+            while cur != start_pt:
+                c_map[cur[0]][cur[1]] = str(step)
+                step += 1
+                step %= 10
+                pts.append(cur)
+                cur
+                cur = path_traceback[cur]
+                cur
+            # it's cyclic path, so we don't need to reverse it
+            return pts
+
+        if (row, col) in vis:
+            continue
+
+        vis.add((row, col))
+        c_map[row][col] = str(step)  # 標記已經走過的點
+        pts.append((row, col))
+
+        c_map[row][col] = str(step)  # 標記已經走過的點
+
+        for _i, (dx, dy) in enumerate(directions):
+            if 0 <= row + dx < len(c_map) and \
+                    0 <= col + dy < len(c_map[0]) and \
+                    c_map[row + dx][col + dy] == '.':
+                dist_new = abs(dx) + abs(dy) + dist + _i * .01
+                heapq.heappush(my_queue, (dist_new, (row, col), (row + dx, col + dy)))
+    # shortest path search failed and return unordered points
+    # print error to stderr
+    logging.warning('shortest path search failed, fallback to unordered points')
+    return pts
+    # if (row, col) in vis:
+    #     return pts
+    #
+    # vis.add((row, col))
+    # pts.append((row, col))
+    #
+    # c_map[row][col] = str(step)  # 標記已經走過的點
+    # step += 1
+    # step %= 10
+    #
+    # for dx, dy in directions:
+    #     if 0 <= row + dx < len(c_map) and 0 <= col + dy < len(c_map[0]) and c_map[row + dx][col + dy] == '.':
+    #         find_outer_sorted_points(c_map, row + dx, col + dy, pts, vis, step)
+    #
+    # return pts
+
+
+def dfs_outer_sort_c_map(c_map: List[List[str]]) -> List[Tuple[int, int]]:
+    rows = len(c_map)
+    cols = len(c_map[0])
+    visited = np.zeros((rows, cols), dtype=bool)
+    edges_pts = []
+
     # 最外圈要逆時針排序
     for i in range(rows):
         for j in range(cols):
-            if map[i][j] == '.' and not visited[i][j]:
-                if (map[i][j+1] == '.'):
-                    map[i][j+1] = '@'  # 先改成@不要讓他一開始往反方向跑
-                if (map[i-1][j+1] == '.'):
-                    map[i-1][j+1] = '@'
-                if (map[i+1][j+1] == '.'):
-                    map[i+1][j+1] = '@'
-                dfs_outer_sort_points(map, i, j, visited,
-                                      outer_sorted_points, step)
-                jump_two_level = True
-                break  # 跳出最外圈輪廓
-        if jump_two_level:
-            break
+            if c_map[i][j] == '.' and not visited[i][j]:
+                # if (c_map[i][j+1] == '.'):
+                #     c_map[i][j+1] = '@'  # 先改成@不要讓他一開始往反方向跑
+                # if (c_map[i-1][j+1] == '.'):
+                #     c_map[i-1][j+1] = '@'
+                # if (c_map[i+1][j+1] == '.'):
+                #     c_map[i+1][j+1] = '@'
+                pts = find_outer_sorted_points(c_map, i, j)
+                if pts != []:
+                    edges_pts.append(pts)
 
-    return outer_sorted_points
+    return edges_pts
 
 
-def dfs_inter_sort_points(map: List[List[str]], row: int, col: int, visited: List[List[bool]], inter_sorted_points: List[Tuple[int, int]], inter_step: int):
+def dfs_inter_sort_points(c_map: List[List[str]], row: int, col: int, visited: List[List[bool]],
+                          inter_sorted_points: List[Tuple[int, int]], inter_step: int):
     # 上、下、左、右、斜對角
     # 順時針排序
     directions = [(-1, 0), (0, 1), (1, 0), (0, -1),
                   (-1, 1), (1, 1), (1, -1), (-1, -1)]
     visited[row][col] = True
     inter_sorted_points.append((row, col))
-    map[row][col] = str(inter_step[0])  # 標記已經走過的點
+    c_map[row][col] = str(inter_step[0])  # 標記已經走過的點
     for direction in directions:
         new_row = row + direction[0]
         new_col = col + direction[1]
         # 檢查新的位置是否越界且未訪問過
-        if 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and map[new_row][new_col] == '.' and not visited[new_row][new_col]:
+        if 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and c_map[new_row][new_col] == '.' and not \
+                visited[new_row][new_col]:
             inter_step[0] += 1
             if inter_step[0] == 10:
                 inter_step[0] = 0  # 歸零(比較好看)
-            if (map[row][col-1] == '@'):  # 確定正確方向後就改回來
-                map[row][col-1] = '.'
-            if (map[row-1][col-1] == '@'):
-                map[row-1][col-1] = '.'
-            if (map[row+1][col-1] == '@'):
-                map[row+1][col-1] = '.'
+            if (c_map[row][col - 1] == '@'):  # 確定正確方向後就改回來
+                c_map[row][col - 1] = '.'
+            if (c_map[row - 1][col - 1] == '@'):
+                c_map[row - 1][col - 1] = '.'
+            if (c_map[row + 1][col - 1] == '@'):
+                c_map[row + 1][col - 1] = '.'
 
-            dfs_inter_sort_points(map, new_row, new_col,
+            dfs_inter_sort_points(c_map, new_row, new_col,
                                   visited, inter_sorted_points, inter_step)
-        elif 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and new_row == row - 1 and new_col == col - 1:
+        elif 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and new_row == row - 1 and new_col == col - 1:
             # 要擴大到第二層搜尋
             two_level_directions = [(-2, 0), (0, 2), (2, 0), (0, -2), (-2, 1), (-1, 2), (1, 2),
                                     (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 2), (2, 2), (2, -2), (-2, -2)]
@@ -161,23 +266,24 @@ def dfs_inter_sort_points(map: List[List[str]], row: int, col: int, visited: Lis
                 new_row = row + two_level_direction[0]
                 new_col = col + two_level_direction[1]
                 # 檢查新的位置是否越界且未訪問過
-                if 0 <= new_row < len(map) and 0 <= new_col < len(map[0]) and map[new_row][new_col] == '.' and not visited[new_row][new_col]:
+                if 0 <= new_row < len(c_map) and 0 <= new_col < len(c_map[0]) and c_map[new_row][new_col] == '.' and not \
+                        visited[new_row][new_col]:
                     inter_step[0] += 1
                     if inter_step[0] == 10:
                         inter_step[0] = 0  # 歸零(比較好看)
-                    if (map[row][col-1] == '@'):  # 確定正確方向後就改回來
-                        map[row][col-1] = '.'
-                    if (map[row-1][col-1] == '@'):
-                        map[row-1][col-1] = '.'
-                    if (map[row+1][col-1] == '@'):
-                        map[row+1][col-1] = '.'
+                    if (c_map[row][col - 1] == '@'):  # 確定正確方向後就改回來
+                        c_map[row][col - 1] = '.'
+                    if (c_map[row - 1][col - 1] == '@'):
+                        c_map[row - 1][col - 1] = '.'
+                    if (c_map[row + 1][col - 1] == '@'):
+                        c_map[row + 1][col - 1] = '.'
                     dfs_inter_sort_points(
-                        map, new_row, new_col, visited, inter_sorted_points, inter_step)
+                        c_map, new_row, new_col, visited, inter_sorted_points, inter_step)
 
 
-def dfs_inter_sort_map(map: List[List[str]]) -> List[Tuple[int, int]]:
-    rows = len(map)
-    cols = len(map[0])
+def dfs_inter_sort_c_map(c_map: List[List[str]]) -> List[Tuple[int, int]]:
+    rows = len(c_map)
+    cols = len(c_map[0])
     visited = [[False] * cols for _ in range(rows)]
     inter_sorted_points = []
     inter_step = [0]
@@ -185,14 +291,14 @@ def dfs_inter_sort_map(map: List[List[str]]) -> List[Tuple[int, int]]:
     # 內圈要順時針排序
     for i in range(rows):
         for j in range(cols):
-            if map[i][j] == '.' and not visited[i][j]:
-                if (map[i][j-1] == '.'):
-                    map[i][j-1] = '@'  # 先改成@不要讓他一開始往反方向跑
-                if (map[i-1][j-1] == '.'):
-                    map[i-1][j-1] = '@'
-                if (map[i+1][j-1] == '.'):
-                    map[i+1][j-1] = '@'
-                dfs_inter_sort_points(map, i, j, visited,
+            if c_map[i][j] == '.' and not visited[i][j]:
+                if (c_map[i][j - 1] == '.'):
+                    c_map[i][j - 1] = '@'  # 先改成@不要讓他一開始往反方向跑
+                if (c_map[i - 1][j - 1] == '.'):
+                    c_map[i - 1][j - 1] = '@'
+                if (c_map[i + 1][j - 1] == '.'):
+                    c_map[i + 1][j - 1] = '@'
+                dfs_inter_sort_points(c_map, i, j, visited,
                                       inter_sorted_points, inter_step)
                 jump_two_level = True
                 break  # 跳出最外圈輪廓
@@ -207,18 +313,18 @@ def smooth_angles(angles):
     for i, _ in enumerate(angles_origin):
         # tuning the window size here
         # apply gaussian filter
-        window_size = 1    # odd number
-        kern = [math.exp(-0.5 * (x - 2)**2 / 1.5**2)
+        window_size = 5  # odd number
+        kern = [math.exp(-0.5 * (x - 2) ** 2 / 1.5 ** 2)
                 for x in range(window_size)]
         kern = [x / sum(kern) for x in kern]
         # solve the boundary problem with circular list
         cand = None
         if i < window_size // 2:
             cand = angles_origin[i - window_size // 2:] + \
-                angles_origin[:i + window_size // 2 + 1]
+                   angles_origin[:i + window_size // 2 + 1]
         elif i >= len(angles_origin) - window_size // 2:
             cand = angles_origin[i - window_size // 2:] + \
-                angles_origin[:i + window_size // 2 + 1]
+                   angles_origin[:i + window_size // 2 + 1]
         else:
             cand = angles_origin[i - window_size // 2:i + window_size // 2 + 1]
         # apply gaussian filter
@@ -226,11 +332,28 @@ def smooth_angles(angles):
         angles[i] = sum([x * y for x, y in zip(kern, cand)])
 
 
-def angle(map: List[List[str]], points_set):
+def angle_diff(angles, window_size=5):
+    ret_0 = angles[window_size // 2:] + angles[0:window_size // 2]
+    ret_1 = angles[-window_size // 2:] + angles[:-window_size // 2]
+    ret = np.asarray(ret_1) - np.asanyarray(ret_0)
+    assert np.shape(ret) == np.shape(angles)
+    return ret
+
+
+def angle(c_map: List[List[str]], points_set):
     """
     my implementation
     """
-    tri_size = 5
+    tri_size = min(5, len(points_set) // 2)
+    ret = []
+    for i in range(len(points_set)):
+        deg = np.arctan2(points_set[(i + tri_size // 2) % len(points_set)][1] - points_set[i - tri_size // 2][1],
+                         points_set[(i + tri_size // 2) % len(points_set)][0] - points_set[i - tri_size // 2][
+                             0]) * 180 / np.pi
+        ret.append(abs(deg))
+
+    return list(ret)
+
     angles = []
     N = len(points_set)
     triangle = True
@@ -282,24 +405,24 @@ def angle(map: List[List[str]], points_set):
                 midpoint_x += 0.5
                 midpoint_y += 0.5
 
-            if map[int(midpoint_x)][int(midpoint_y)] == '#':
+            if c_map[int(midpoint_x)][int(midpoint_y)] == '#':
                 inside = False
             else:
                 inside = True
 
             # 算出來的角度是字的內角
             if inside == True:
-                b = math.sqrt(fc_x_diff**2 + fc_y_diff**2)
-                c = math.sqrt(bf_x_diff**2 + bf_y_diff**2)
-                f = math.sqrt(bc_x_diff**2 + bc_y_diff**2)
-                cosine_value = (f**2 + b**2 - c**2)/(2*f*b)
+                b = math.sqrt(fc_x_diff ** 2 + fc_y_diff ** 2)
+                c = math.sqrt(bf_x_diff ** 2 + bf_y_diff ** 2)
+                f = math.sqrt(bc_x_diff ** 2 + bc_y_diff ** 2)
+                cosine_value = (f ** 2 + b ** 2 - c ** 2) / (2 * f * b)
                 angles.append((math.acos(cosine_value) * 180) / math.acos(-1))
             # 算出來的角度是字的外角所以要用360減一次
             else:
-                b = math.sqrt(fc_x_diff**2 + fc_y_diff**2)
-                c = math.sqrt(bf_x_diff**2 + bf_y_diff**2)
-                f = math.sqrt(bc_x_diff**2 + bc_y_diff**2)
-                cosine_value = (f**2 + b**2 - c**2)/(2*f*b)
+                b = math.sqrt(fc_x_diff ** 2 + fc_y_diff ** 2)
+                c = math.sqrt(bf_x_diff ** 2 + bf_y_diff ** 2)
+                f = math.sqrt(bc_x_diff ** 2 + bc_y_diff ** 2)
+                cosine_value = (f ** 2 + b ** 2 - c ** 2) / (2 * f * b)
                 angles.append(
                     360 - ((math.acos(cosine_value) * 180) / math.acos(-1)))
 
@@ -316,51 +439,42 @@ def angle(map: List[List[str]], points_set):
 
 # 從一區C_points中找出一點當C_points
 def real_C_point(C_points):
+    # TODO not done yet!!!
+    C_points = C_points.copy()
     N = len(C_points)
     real_C = []
-    buf = []
-    for i, c in enumerate(C_points):
-        if len(buf) == 0:
-            buf.append(c)
-        else:
-            if (c[0] - buf[-1][0])**2 + (c[1] - buf[-1][1])**2 <= 2:
-                buf.append(c)
-            else:
-                real_C.append(buf[len(buf)//2])
-                buf = []
-    if len(buf) != 0:
-        real_C.append(buf[len(buf)//2])
-    # seg_len = 0
-    # for i in range(N-1):
-    #     seg_len += 1
-    #     x_diff = C_points[i][0] - C_points[i+1][0]
-    #     y_diff = C_points[i][1] - C_points[i+1][1]
-    #     distance = math.sqrt(x_diff**2 + y_diff**2)
-    #     if (distance > 5) or (i == N-2):
-    #         seg_len += 1
-    #         seg_len = seg_len // 2
-    #         real_C.append(C_points[i - seg_len + 1])
-    #         seg_len = 0
+
+    seg_len = 0
+    for i in range(N - 1):
+        seg_len += 1
+        x_diff = C_points[i][0] - C_points[i + 1][0]
+        y_diff = C_points[i][1] - C_points[i + 1][1]
+        distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
+        if (distance > 5) or (i == N - 2):
+            seg_len += 1
+            seg_len = seg_len // 2
+            real_C.append(C_points[i - seg_len + 1])
+            seg_len = 0
 
     return real_C
 
 
 # 判斷C-points的角度參數需隨著字調整還有C-points的準確率也要手動修正
-def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray:
+def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> List[List[List[int]]]:
     """
     img: edges
-    returns: sequence of points
+    returns: [edges][points][x, y]
     """
     all_points = []
 
     h0, w0 = np.shape(con)
-    map = [[''] * w0 for _ in range(h0)]  # 將二值圖轉成map做dfs(視覺化)
+    c_map = [[''] * w0 for _ in range(h0)]  # 將二值圖轉成c_map做dfs(視覺化)
     for i in range(h0):
         for j in range(w0):
             if con[i, j] > 128:
-                map[i][j] = 'i'  # 輪廓內部設為i
+                c_map[i][j] = 'i'  # 輪廓內部設為i
             else:
-                map[i][j] = '#'
+                c_map[i][j] = '#'
 
     vs = []
     h, w = np.shape(img)
@@ -369,67 +483,132 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
         for j in range(w):
             if img[i, j] > 128:
                 vs.append((i, j))
-                map[i][j] = '.'
+                c_map[i][j] = '.'
             else:
-                if map[i][j] != 'i':
-                    map[i][j] = '#'
+                if c_map[i][j] != 'i':
+                    c_map[i][j] = '#'
 
     # 外輪廓逆時針排序後
-    outer_sorted_points = dfs_outer_sort_map(map)
-    for i in range(len(outer_sorted_points)):
-        all_points.append(
-            (outer_sorted_points[i][0], outer_sorted_points[i][1]))
+    outer_sorted_points = dfs_outer_sort_c_map(c_map)
+    all_points = outer_sorted_points
+    # for i in range(len(outer_sorted_points)):
+    #     all_points += outer_sorted_points[i]
     # 排序後做貝賽爾曲線擬合(要評估看看要不要用)
     # bezier(outer_sorted_points)
 
     C_points = []
-    outer_angle = angle(map, outer_sorted_points)
+    outer_edges_angles = list(
+        map(lambda x: angle(c_map, x), outer_sorted_points))
+    outer_edges_angles_diff = list(
+        map(lambda x: angle_diff(x), outer_edges_angles))
+
     # det_angle = max(sorted(outer_angle)[-len(outer_angle)//30], 180)
     # print(f"{det_angle=}")
-    for i in range(len(outer_angle)):
-        if (outer_angle[i] > 220):  # 220
-            C_points.append(
-                (outer_sorted_points[i][0], outer_sorted_points[i][1]))
+    for j in range(len(outer_edges_angles)):
+        for i in range(len(outer_edges_angles[j])):
+            angle_eps = 60.0
+            if abs(outer_edges_angles_diff[j][i]) > angle_eps:  # 220
+                # check if it is a C-point by checking it points to the inside
+
+                INNER_CHK_SIZE = 5
+                EXT_FACTOR = 2
+                # check from previous point
+                p, q = outer_sorted_points[j][i]
+
+                vx_1 = outer_sorted_points[j][(i - INNER_CHK_SIZE) % len(outer_sorted_points[j])][0] - p
+                vy_1 = outer_sorted_points[j][(i - INNER_CHK_SIZE) % len(outer_sorted_points[j])][1] - q
+
+                # check from next point
+                vx_2 = outer_sorted_points[j][(i + INNER_CHK_SIZE) % len(outer_sorted_points[j])][0] - p
+                vy_2 = outer_sorted_points[j][(i + INNER_CHK_SIZE) % len(outer_sorted_points[j])][1] - q
+
+                v_x = vx_1 + vx_2
+                v_y = vy_1 + vy_2
+                if not v_x == 0 and not v_y == 0:
+                    v_x = v_x / np.linalg.norm([v_x, v_y])
+                    v_y = v_y / np.linalg.norm([v_x, v_y])
+                x = p - v_x * EXT_FACTOR
+                y = q - v_y * EXT_FACTOR
+                # convert char map to plotable image
+                img = np.zeros((h0, w0, 3), dtype=np.uint8)
+                for my_w in range(h0):
+                    for my_h in range(w0):
+                        if c_map[my_w][my_h] == '#':
+                            img[my_w, my_h] = [255, 255, 255]
+                        elif c_map[my_w][my_h] == 'i':
+                            img[my_w, my_h] = [0, 0, 0]
+                        elif c_map[my_w][my_h] == '.':
+                            img[my_w, my_h] = [255, 0, 0]
+                        else:
+                            img[my_w, my_h] = [0, 255, 0]
+                if False:  # debug
+                    # plot
+                    plt.imshow(img)
+                    plt.scatter(y, x, c='r')
+                    # plot two reference points
+                    plt.scatter(outer_sorted_points[j][(i - INNER_CHK_SIZE) % len(outer_sorted_points[j])][1],
+                                outer_sorted_points[j][(i - INNER_CHK_SIZE) % len(outer_sorted_points[j])][0], c='b')
+                    plt.scatter(outer_sorted_points[j][(i + INNER_CHK_SIZE) % len(outer_sorted_points[j])][1],
+                                outer_sorted_points[j][(i + INNER_CHK_SIZE) % len(outer_sorted_points[j])][0], c='b')
+                    # plot v1
+                    plt.arrow(q, p, vy_1, vx_1, color='b', head_width=0.2)
+                    # plot v2
+                    plt.arrow(q, p, vy_2, vx_2, color='b', head_width=0.2)
+                    # plot v
+                    plt.arrow(p, q, -v_y, -v_x, color='g', head_width=0.2)
+                    plt.show()
+
+                # C_points.append(
+                #     (outer_sorted_points[j][i][0], outer_sorted_points[j][i][1]))
+                try:
+                    if c_map[int(x)][int(y)] != '#':
+                        C_points.append(
+                            (outer_sorted_points[j][i][0], outer_sorted_points[j][i][1]))
+                        print(f"{outer_sorted_points[j][i]} is C-point")
+                    else:
+                        print(f"{outer_sorted_points[j][i]} is not C-point due to inner angle check failed")
+                except IndexError:
+                    print(f"({x}, {y}) is out of range")
 
     # 動態生成多個陣列並以不同的變數名稱保存它們
     # inter_sorted_dict = {}
     # inter_count = 0  # 內圈數量 從0開始
     jump_three_level = False  # 跳出三層迴圈
     # 去判斷是否有內圈輪廓，因為內圈輪廓可能有多個所以用迴圈
-    while True:
-        for i in range(h):
-            for j in range(w):
-                if map[i][j] == '.':  # 尚有內圈輪廓
-                    '''
-                    inter_array_name = f"{inter_count}"
-                    inter_sorted_dict[inter_array_name] = dfs_inter_sort_map(map)
-                    for k in range(len(inter_sorted_dict[inter_array_name])):
-                        all_points.append((inter_sorted_dict[k][0], inter_sorted_dict[k][1]))    
-                    inter_angle = angle(map, inter_sorted_dict[inter_array_name])
-                    for k in range(len(inter_angle)):
-                        if(inter_angle[k] > 220):
-                            #map[inter_sorted_dict[inter_array_name][i][0]][inter_sorted_dict[inter_array_name][i][1]] = 'C'
-                            C_points.append((inter_sorted_dict[inter_array_name][k][0], inter_sorted_dict[inter_array_name][k][1]))
-                    inter_count += 1
-                    '''
-                    inter_sorted_points = []
-                    inter_sorted_points = dfs_inter_sort_map(map)
-                    for k in range(len(inter_sorted_points)):
-                        all_points.append(
-                            (inter_sorted_points[k][0], inter_sorted_points[k][1]))
-                    inter_angle = angle(map, inter_sorted_points)
-                    for k in range(len(inter_angle)):
-                        if (inter_angle[k] > 180):  # 220
-                            # map[inter_sorted_dict[inter_array_name][i][0]][inter_sorted_dict[inter_array_name][i][1]] = 'C'
-                            C_points.append(
-                                (inter_sorted_points[k][0], inter_sorted_points[k][1]))
-                elif (i == h-1 and j == w-1):  # 如果找到最後一個還是沒有就代表沒有內圈輪廓了
-                    jump_three_level = True
-                    break
-            if jump_three_level:
-                break
-        if jump_three_level:
-            break
+    # while True:
+    #     for i in range(len(c_map)):
+    #         for j in range(len(c_map[i])):
+    #             if c_map[i][j] == '.':  # 尚有內圈輪廓
+    #                 '''
+    #                 inter_array_name = f"{inter_count}"
+    #                 inter_sorted_dict[inter_array_name] = dfs_inter_sort_c_map(c_map)
+    #                 for k in range(len(inter_sorted_dict[inter_array_name])):
+    #                     all_points.append((inter_sorted_dict[k][0], inter_sorted_dict[k][1]))
+    #                 inter_angle = angle(c_map, inter_sorted_dict[inter_array_name])
+    #                 for k in range(len(inter_angle)):
+    #                     if(inter_angle[k] > 220):
+    #                         #c_map[inter_sorted_dict[inter_array_name][i][0]][inter_sorted_dict[inter_array_name][i][1]] = 'C'
+    #                         C_points.append((inter_sorted_dict[inter_array_name][k][0], inter_sorted_dict[inter_array_name][k][1]))
+    #                 inter_count += 1
+    #                 '''
+    #                 inter_sorted_points = []
+    #                 inter_sorted_points = dfs_inter_sort_c_map(c_map)
+    #                 for k in range(len(inter_sorted_points)):
+    #                     all_points.append(
+    #                         (inter_sorted_points[k][0], inter_sorted_points[k][1]))
+    #                 inter_angle = angle(c_map, inter_sorted_points)
+    #                 for k in range(len(inter_angle)):
+    #                     if (inter_angle[k] > 180):  # 220
+    #                         # c_map[inter_sorted_dict[inter_array_name][i][0]][inter_sorted_dict[inter_array_name][i][1]] = 'C'
+    #                         C_points.append(
+    #                             (inter_sorted_points[k][0], inter_sorted_points[k][1]))
+    #             elif (i == h - 1 and j == w - 1):  # 如果找到最後一個還是沒有就代表沒有內圈輪廓了
+    #                 jump_three_level = True
+    #                 break
+    #         if jump_three_level:
+    #             break
+    #     if jump_three_level:
+    #         break
 
     # print(C_points)
     # 將一區中多個C點取中間點一個當real C point
@@ -439,89 +618,110 @@ def order_point_and_find_Cpoints(img: np.ndarray, con: np.ndarray) -> np.ndarray
     print(real_C)
 
     for i in range(len(real_C)):
-        map[real_C[i][0]][real_C[i][1]] = 'C'
+        c_map[real_C[i][0]][real_C[i][1]] = 'C'
 
-    print("印出排序且找出C點後的map")
-    for i in range(h):
+    print("印出排序且找出C點後的c_map")
+    for i in range(len(c_map)):
         print(i, end="")
-        for j in range(w):
-            if map[i][j] == '#' or map[i][j] == 'i':
+        for j in range(len(c_map[i])):
+            if c_map[i][j] == '#' or c_map[i][j] == 'i':
                 print(" ", end=" ")
             else:
-                print(map[i][j], end=" ")
+                print(c_map[i][j], end=" ")
         print()
 
-    return map, real_C, all_points
+    return c_map, real_C, all_points
 
 
 def find_corr_candidate_pts(tangent_pts, c_pts) -> List[Tuple[List[int], float]]:
-    DISTANCE_THRESHOLD = 10
+    DISTANCE_THRESHOLD = 15
     """
     @param tangent_pts: list of (x, y) points on tangent line
     @param c_pts: list of (x, y) points on C points
     @return: List of [x, y] points on C points and distance to tangent line
     """
     ret = []
-    if (len(tangent_pts) < 10):
+    ref_delta_size = 1
+    if len(tangent_pts) < 10:
         return []
     xs, ys = zip(*tangent_pts)
     # vertical line
-    if abs(xs[0] - xs[-1]) < 1:
+    if abs(xs[0] - xs[-ref_delta_size]) < 1:
         return [([x, y], abs(x - xs[0])) for x, y in c_pts if abs(x - xs[0]) < DISTANCE_THRESHOLD
-                and np.min([np.linalg.norm([p-x, q-y]) for p, q in zip(xs, ys)]) > 1]
+                and np.min([np.linalg.norm([p - x, q - y]) for p, q in zip(xs, ys)]) > 1]
 
     # y = mx + y0
     # ax + by + c = 0
-    a = (ys[-1] - ys[0]) / (xs[-1] - xs[0])
+    a = (ys[-ref_delta_size] - ys[0]) / (xs[-ref_delta_size] - xs[0])
     b = -1
     c = ys[0] - a * xs[0]
     d = abs(a * np.array(c_pts)[:, 0] + b * np.array(c_pts)
-            [:, 1] + c) / np.sqrt(a ** 2 + b ** 2)
+    [:, 1] + c) / np.sqrt(a ** 2 + b ** 2)
     return [([x, y], d) for (x, y), d in zip(c_pts, d)
-            if d < DISTANCE_THRESHOLD and np.min([np.linalg.norm([p-x, q-y]) for p, q in zip(xs, ys)]) > 1]
+            if d < DISTANCE_THRESHOLD and np.min([np.linalg.norm([p - x, q - y]) for p, q in zip(xs, ys)]) > 1]
 
 
-def find_pair_c_pts(all_points: List[Tuple[int, int]], c_pts: List[Tuple[int, int]]):
+def find_pair_c_pts(all_points: List[List[List[int]]], c_pts: List[Tuple[int, int]]) -> \
+        List[Tuple[Tuple[int, int], Tuple[int, int]]]:
     """
     find_pair_c_pts finds corresponding C points by minimum distance from tangent line to C points
+    @param all_points: lists of points on each edge
+    @param c_pts: list of C points
+    @return: list of corresponding C points
     """
 
     # c pts is stored in [x, y]
-
     # key: C point. value: list of (corresponding C point candidates, distance)
     REF_PTS = 64
-    corresponding_c_pts: Dict[Tuple[int, int],
-                              List[Tuple[List[int, int], float]]] = {}
-    corresponding_c_pts = {pt: [] for pt in c_pts}
 
-    search_pts = all_points[-REF_PTS:] + all_points + all_points[:REF_PTS]
+    corresponding_c_pts: Dict[Tuple[int, int], Dict[Tuple[int, int], float]] = {pt: {} for pt in c_pts}
 
-    for i, pt in enumerate(search_pts):
-        # find soften tangent line iteratively
-        if pt in corresponding_c_pts:
-            if i < 5 or i > len(search_pts) - REF_PTS:
-                print("ignore wrapped C point")
-                continue
+    for edge_pts in all_points:
+        search_pts = edge_pts[-REF_PTS:] + edge_pts + edge_pts[:REF_PTS]
+        for i, pt in enumerate(search_pts):
+            # find soften tangent line iteratively
+            if tuple(pt) in corresponding_c_pts:
+                if i < 5 or i > len(search_pts) - REF_PTS:
+                    print("ignore wrapped C point")
+                    continue
 
-            cand_pts = find_corr_candidate_pts(search_pts[i-REF_PTS:i], c_pts)
-            corresponding_c_pts[pt] += cand_pts
-            print(f"cand_pts for {pt} :", cand_pts)
+                cand_pts = find_corr_candidate_pts(
+                    search_pts[i - REF_PTS:i], c_pts)
+                for cand_pt, dist in cand_pts:
+                    corresponding_c_pts[tuple(pt)][tuple(cand_pt)] = dist
+                print(f"cand_pts for {pt} :", cand_pts)
 
-    for i, pt in enumerate(reversed(search_pts)):
-        # find soften tangent line iteratively
-        if pt in corresponding_c_pts:
-            if i < 5 or i > len(search_pts) - REF_PTS:
-                print("ignore wrapped C point")
-                continue
+        for i, pt in enumerate(reversed(search_pts)):
+            # find soften tangent line iteratively
+            if tuple(pt) in corresponding_c_pts:
+                if i < 5 or i > len(search_pts) - REF_PTS:
+                    print("ignore wrapped C point")
+                    continue
 
-            cand_pts = find_corr_candidate_pts(search_pts[i-REF_PTS:i], c_pts)
-            corresponding_c_pts[pt] += cand_pts
-            print(f"cand_pts for {pt} :", cand_pts)
+                cand_pts = find_corr_candidate_pts(
+                    search_pts[i - REF_PTS:i], c_pts)
+                for cand_pt, dist in cand_pts:
+                    corresponding_c_pts[tuple(pt)][tuple(cand_pt)] = dist
+                print(f"cand_pts for {pt} :", cand_pts)
+
+    ret = []
+    # find c point if appear in both corresponding_c_pts
+    # print beautified corresponding_c_pts
+    for pt, cand_pts in corresponding_c_pts.items():
+        if len(cand_pts) == 0:
+            continue
+        print(f"{pt} : {cand_pts}")
+
+    for pt_a, cand_pts in corresponding_c_pts.items():
+        for pt_b in cand_pts:
+            if pt_a in corresponding_c_pts[pt_b]:
+                ret.append((pt_a, pt_b))
+    print(f"ret: {ret}")
+    return ret
 
 
 # 判斷水平跟垂直關係的距離也要判斷(需調整距離參數)還有判斷垂直跟水平的斜率差參數也需調整
-def classify_C_point(map: List[List[str]], C_points):
-
+def classify_C_point(c_map: List[List[str]], C_points):
     # 將C_point定好名字 2a,2b,4c,4d,6e,6f...
     C_points_name = []
     letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
@@ -532,10 +732,10 @@ def classify_C_point(map: List[List[str]], C_points):
         if i % 2 != 0:
             C_points_name.append(str(number) + letters[letters_count])
             number += 2
-            letters_count += 1
+            # letters_count += 1
         else:
             C_points_name.append(str(number) + letters[letters_count])
-            letters_count += 1
+            # letters_count += 1
     # print(C_points_name)
     # 將兩兩一對抓出來檢查相對關係
 
@@ -552,7 +752,7 @@ def classify_C_point(map: List[List[str]], C_points):
         check_no_in_class.append(0)
 
     for i in range(len(C_points_name)):
-        for j in range(i+1, len(C_points_name)):
+        for j in range(i + 1, len(C_points_name)):
             pair = (C_points_name[i], C_points_name[j])
             total_pairs.append(pair)
             is_same_sub_correspond = True
@@ -560,17 +760,18 @@ def classify_C_point(map: List[List[str]], C_points):
             is_parallel = True
 
             # 判斷是否co-linear 垂直 除了判斷垂直還要判斷距離是否離太遠
-            if (abs(C_points[i][1] - C_points[j][1])) < 10 and math.sqrt((C_points[i][1] - C_points[j][1])**2 + (C_points[i][0] - C_points[j][0])**2) < 20:
+            if (abs(C_points[i][1] - C_points[j][1])) < 10 and math.sqrt(
+                    (C_points[i][1] - C_points[j][1]) ** 2 + (C_points[i][0] - C_points[j][0]) ** 2) < 20:
                 # 判斷兩點連線中是否有切到字的內部
                 center_x = (C_points[i][0] + C_points[j][0]) // 2
                 center_y = (C_points[i][1] + C_points[j][1]) // 2
-                if (map[center_x][center_y] == 'i'):
+                if (c_map[center_x][center_y] == 'i'):
                     # 判斷中點往左右走是否會碰到邊界或到外面，如果有代表兩點可能在同一線上
                     for k in range(3):
-                        if (map[center_x][center_y+k] != 'i'):
+                        if (c_map[center_x][center_y + k] != 'i'):
                             is_co_linear = False
                     for k in range(3):
-                        if (map[center_x][center_y-k] != 'i'):
+                        if (c_map[center_x][center_y - k] != 'i'):
                             is_co_linear = False
                     if (is_co_linear == True):
                         co_linear_name.append(pair)
@@ -579,18 +780,19 @@ def classify_C_point(map: List[List[str]], C_points):
                         check_no_in_class[i] = 1
                         check_no_in_class[j] = 1
             # 判斷是否parallel or same_sub_correspond 水平 除了判斷水平還要判斷距離是否離太遠
-            elif (abs(C_points[i][0] - C_points[j][0])) < 10 and math.sqrt((C_points[i][1] - C_points[j][1])**2 + (C_points[i][0] - C_points[j][0])**2) < 20:
+            elif (abs(C_points[i][0] - C_points[j][0])) < 10 and math.sqrt(
+                    (C_points[i][1] - C_points[j][1]) ** 2 + (C_points[i][0] - C_points[j][0]) ** 2) < 20:
                 # 判斷是否為same_sub_correspond
                 if C_points_name[i][0] == C_points_name[j][0]:
                     # 判斷兩點連線中是否有切到字的內部
                     center_x = (C_points[i][0] + C_points[j][0]) // 2
                     center_y = (C_points[i][1] + C_points[j][1]) // 2
-                    if (map[center_x][center_y] == 'i'):
+                    if (c_map[center_x][center_y] == 'i'):
                         for k in range(3):
-                            if (map[center_x+k][center_y] != 'i'):
+                            if (c_map[center_x + k][center_y] != 'i'):
                                 is_same_sub_correspond = False
                         for k in range(3):
-                            if (map[center_x-k][center_y] != 'i'):
+                            if (c_map[center_x - k][center_y] != 'i'):
                                 is_same_sub_correspond = False
                         if (is_same_sub_correspond == True):
                             same_sub_correspond_name.append(pair)
@@ -604,13 +806,13 @@ def classify_C_point(map: List[List[str]], C_points):
                     # 判斷兩點連線中是否有切到字的內部
                     center_x = (C_points[i][0] + C_points[j][0]) // 2
                     center_y = (C_points[i][1] + C_points[j][1]) // 2
-                    if (map[center_x][center_y] == 'i'):
+                    if (c_map[center_x][center_y] == 'i'):
                         # 判斷中點往左右走是否會碰到邊界或到外面，如果有代表兩點可能在同一線上
                         for k in range(3):
-                            if (map[center_x+k][center_y] != 'i'):
+                            if (c_map[center_x + k][center_y] != 'i'):
                                 is_parallel = False
                         for k in range(3):
-                            if (map[center_x-k][center_y] != 'i'):
+                            if (c_map[center_x - k][center_y] != 'i'):
                                 is_parallel = False
                         if (is_parallel == True):
                             parallel_name.append(pair)
@@ -654,7 +856,7 @@ def sub_contour_cut_same(img: np.ndarray, order) -> List[np.ndarray]:
             continue
         x, y, w, h = cv2.boundingRect(mask)
         # should apply bounding check in the future.
-        ret.append(mask[y-5:y+h+5, x-5:x+w+5])
+        ret.append(mask[y - 5:y + h + 5, x - 5:x + w + 5])
         for _, sub_contour in enumerate(ret):
             edge = edge_detection(sub_contour)
             _, real_C, _ = order_point_and_find_Cpoints(edge, sub_contour)
@@ -668,7 +870,7 @@ def sub_contour_cut_same(img: np.ndarray, order) -> List[np.ndarray]:
                 cv2.imwrite(
                     f"./seg_output_tmp/output1_{order}.png", inverted_img)
                 # Fill the corresponding region in the original image with black
-                img[y:y+h, x:x+w] = 0
+                img[y:y + h, x:x + w] = 0
                 order += 1
         ret.clear()
     return img, order
@@ -688,7 +890,7 @@ def sub_contour_cut_parallel(img: np.ndarray, co_linear, parallel, C_point, orde
             continue
         x, y, w, h = cv2.boundingRect(mask)
         # should apply bounding check in the future.
-        ret.append(mask[y-5:y+h+5, x-5:x+w+5])
+        ret.append(mask[y - 5:y + h + 5, x - 5:x + w + 5])
         for _, sub_contour in enumerate(ret):
             edge = edge_detection(sub_contour)
             _, real_C, _ = order_point_and_find_Cpoints(edge, sub_contour)
@@ -703,7 +905,7 @@ def sub_contour_cut_parallel(img: np.ndarray, co_linear, parallel, C_point, orde
                     cv2.imwrite(
                         f"./seg_output_tmp/output1_{order}.png", inverted_img)
                     # Fill the corresponding region in the original image with black
-                    img[y:y+h, x:x+w] = 0
+                    img[y:y + h, x:x + w] = 0
                     order += 1
         ret.clear()
     cv2.imwrite("./seg_output_tmp/1.png", img)
@@ -714,7 +916,8 @@ def sub_contour_cut_parallel(img: np.ndarray, co_linear, parallel, C_point, orde
     is_cut = False
     for i in range(len(co_linear)):
         for j in range(len(parallel)):
-            if co_linear[i][0] == parallel[j][0] or co_linear[i][0] == parallel[j][1] or co_linear[i][1] == parallel[j][0] or co_linear[i][1] == parallel[j][1]:
+            if co_linear[i][0] == parallel[j][0] or co_linear[i][0] == parallel[j][1] or co_linear[i][1] == parallel[j][
+                0] or co_linear[i][1] == parallel[j][1]:
                 is_cut = True
                 break
         if is_cut == True:
@@ -722,14 +925,14 @@ def sub_contour_cut_parallel(img: np.ndarray, co_linear, parallel, C_point, orde
             # 因為前面連線的寬度是2會有點連不到的問題，所以連長一點(+-10)
             if C_point[co_linear[i][0]][0] > C_point[co_linear[i][1]][0]:
                 point1 = (C_point[co_linear[i][0]][1],
-                          C_point[co_linear[i][0]][0]+15)  # +
+                          C_point[co_linear[i][0]][0] + 15)  # +
                 point2 = (C_point[co_linear[i][1]][1],
-                          C_point[co_linear[i][1]][0]-15)  # -
+                          C_point[co_linear[i][1]][0] - 15)  # -
             else:
                 point1 = (C_point[co_linear[i][0]][1],
-                          C_point[co_linear[i][0]][0]-15)  # -
+                          C_point[co_linear[i][0]][0] - 15)  # -
                 point2 = (C_point[co_linear[i][1]][1],
-                          C_point[co_linear[i][1]][0]+15)  # +
+                          C_point[co_linear[i][1]][0] + 15)  # +
             cv2.line(img, point1, point2, (255, 255, 255), 1)
             # 連完線後改成-1 -1以免之後做切直線的時候重複連線
             co_linear = list(co_linear)  # 將tuple轉乘list
@@ -763,7 +966,7 @@ def sub_contour_cut_co_linear(img: np.ndarray, order) -> List[np.ndarray]:
             continue
         x, y, w, h = cv2.boundingRect(mask)
         # should apply bounding check in the future.
-        ret.append(mask[y-5:y+h+5, x-5:x+w+5])
+        ret.append(mask[y - 5:y + h + 5, x - 5:x + w + 5])
         for _, sub_contour in enumerate(ret):
             edge = edge_detection(sub_contour)
             _, real_C, _ = order_point_and_find_Cpoints(edge, sub_contour)
@@ -777,7 +980,7 @@ def sub_contour_cut_co_linear(img: np.ndarray, order) -> List[np.ndarray]:
                     cv2.imwrite(
                         f"./seg_output_tmp/output1_{order}.png", inverted_img)
                     # Fill the corresponding region in the original image with black
-                    img[y:y+h, x:x+w] = 0
+                    img[y:y + h, x:x + w] = 0
                     order += 1
         ret.clear()
     return img, order
@@ -797,7 +1000,7 @@ def sub_contour_cut_no_class(img: np.ndarray, order) -> List[np.ndarray]:
             continue
         x, y, w, h = cv2.boundingRect(mask)
         # should apply bounding check in the future.
-        ret.append(mask[y-5:y+h+5, x-5:x+w+5])
+        ret.append(mask[y - 5:y + h + 5, x - 5:x + w + 5])
         for _, sub_contour in enumerate(ret):
             edge = edge_detection(sub_contour)
             cv2.imwrite(f"./seg_output_tmp/output_{order}.png", sub_contour)
@@ -805,7 +1008,7 @@ def sub_contour_cut_no_class(img: np.ndarray, order) -> List[np.ndarray]:
             inverted_img = ~sub_contour
             cv2.imwrite(f"./seg_output_tmp/output1_{order}.png", inverted_img)
             # Fill the corresponding region in the original image with black
-            img[y:y+h, x:x+w] = 0
+            img[y:y + h, x:x + w] = 0
             order += 1
         ret.clear()
 
@@ -846,11 +1049,11 @@ def calculate_tangent_line(all_point, C_point_count, real_C):
             b_points = []
             # xy要顛倒
             b_points.append(
-                (all_point[(i-1) % len(all_point)][1], all_point[(i-1) % len(all_point)][0]))
+                (all_point[(i - 1) % len(all_point)][1], all_point[(i - 1) % len(all_point)][0]))
             b_points.append((all_point[i][1], all_point[i][0]))
             # b_points.append((all_point[(i-2) % len(all_point)][1] , all_point[(i-2) % len(all_point)][0]))
             b_points.append(
-                (all_point[(i+1) % len(all_point)][1], all_point[(i+1) % len(all_point)][0]))
+                (all_point[(i + 1) % len(all_point)][1], all_point[(i + 1) % len(all_point)][0]))
             # b_points.append((all_point[(i+2) % len(all_point)][1] , all_point[(i+2) % len(all_point)][0]))
             b_points = np.array(b_points)
             # 目標點
@@ -860,11 +1063,11 @@ def calculate_tangent_line(all_point, C_point_count, real_C):
 
             # 在目標點處的切線向量
             x_derivative = 2 * \
-                (1 - t) * (b_points[1, 0] - b_points[0, 0]) + \
-                2 * t * (b_points[2, 0] - b_points[1, 0])
+                           (1 - t) * (b_points[1, 0] - b_points[0, 0]) + \
+                           2 * t * (b_points[2, 0] - b_points[1, 0])
             y_derivative = 2 * \
-                (1 - t) * (b_points[1, 1] - b_points[0, 1]) + \
-                2 * t * (b_points[2, 1] - b_points[1, 1])
+                           (1 - t) * (b_points[1, 1] - b_points[0, 1]) + \
+                           2 * t * (b_points[2, 1] - b_points[1, 1])
             tangent_vector = np.array([x_derivative, y_derivative])
 
             print(tangent_vector)
@@ -879,7 +1082,6 @@ def calculate_tangent_line(all_point, C_point_count, real_C):
 
 
 def cut_and_connect(img: np.ndarray, co_linear, parallel, same_sub_correspond, no_in_class, real_C, order, all_point):
-
     # 先切出same_sub_correspond
     cut_img = img
     for i in range(len(same_sub_correspond)):
@@ -997,26 +1199,34 @@ def main():
         cv2.imwrite(f"./seg_output_tmp/./tmp0_{i}.png", con)
         # outputs/tmp_{i}.png
         cv2.imwrite(f"./seg_output_tmp/./tmp_{i}.png", edge)
-        map, real_C, all_point = order_point_and_find_Cpoints(edge, con)
+        c_map, real_C, all_point = order_point_and_find_Cpoints(edge, con)
         # DEBUG HERE
         print("DEBUG HERE")
         print(real_C)
-        print(map)
+        # print(c_map)
+        for row in c_map:
+            print("".join(row))
         print(all_point)
-        pts = np.asarray(all_point, np.int32)
-        pts = pts.reshape((-1, 1, 2))
-        max_edge_len = max([max(x, y) for x, y in all_point])
+        pts = np.asarray([pt for u in all_point for pt in u], np.int32)
+        # pts = pts.reshape((-1, 1, 2))
+        max_edge_len = max([max([max(x, y) for x, y in pts])
+                            for pts in all_point])
         img = np.zeros((max_edge_len + 5, max_edge_len + 5, 3), np.uint8)
-        cv2.polylines(img, [pts], True, (255, 255, 255))
+        # cv2.polylines(img, [pts], False, (255, 255, 255))
+        for pt in pts:
+            img[pt[0], pt[1]] = (255, 255, 255)
         # circle c points as red with sutable size
         for c in real_C:
-            cv2.circle(img, (c[0], c[1]), max_edge_len // 100, (255, 0, 0), -1)
+            cv2.circle(img, (c[1], c[0]), max_edge_len // 100, (100, 100, 100), -1)
 
         plt.imshow(img, cmap='gray')
-        find_pair_c_pts(all_point, real_C)
+        paired_c_points = find_pair_c_pts(all_point, real_C)
+        # plot paired c points
+        for c1, c2 in paired_c_points:
+            plt.plot([c1[1], c2[1]], [c1[0], c2[0]], 'ro-')
         plt.show()
         co_linear, parallel, same_sub_correspond, no_in_class = classify_C_point(
-            map, real_C)
+            c_map, real_C)
         order = cut_and_connect(
             con, co_linear, parallel, same_sub_correspond, no_in_class, real_C, order, all_point)
 
@@ -1027,7 +1237,6 @@ if __name__ == "__main__":
 
 # 原論文方式(有問題)
 def calculate_angle(points_set):
-
     angles = []
     N = len(points_set)
     for i in range(N - 1):
@@ -1052,21 +1261,21 @@ def calculate_P(points_set, angle_set):
         pi_sum = 0.0
         for j in range(-1, 3):
             x_diff = points_set[(i + j) % N][0] - \
-                points_set[(i + j - 1) % N][0]
+                     points_set[(i + j - 1) % N][0]
             y_diff = points_set[(i + j) % N][1] - \
-                points_set[(i + j - 1) % N][1]
-            distance = math.sqrt(x_diff**2 + y_diff**2)
+                     points_set[(i + j - 1) % N][1]
+            distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
             pi_sum += distance
         pi_value = (angle_set[(i + 2) % N] -
                     angle_set[(i - 2) % N]) / pi_sum  # +2-2
         P_values.append(pi_value)
     return P_values
 
+
 # smooth(有問題)
 
 
 def Douglas_Peucker(points_set):
-
     # 進行多邊形逼近
     epsilon = 0.1  # 控制逼近精度的參數
     approx = cv2.approxPolyDP(points_set, epsilon, closed=True)
@@ -1085,16 +1294,21 @@ def Douglas_Peucker(points_set):
 
     return rotated_image
 
+
 # 貝賽爾曲線(需評估是否需要放)
 
 
 def decic_bezier(points, t):
     # 計算十階貝賽爾曲線上的點座標
     p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10 = points
-    x = (1 - t) ** 10 * p0[0] + 10 * (1 - t) ** 9 * t * p1[0] + 45 * (1 - t) ** 8 * t ** 2 * p2[0] + 120 * (1 - t) ** 7 * t ** 3 * p3[0] + 210 * (1 - t) ** 6 * t ** 4 * p4[0] + 252 * (
-        1 - t) ** 5 * t ** 5 * p5[0] + 210 * (1 - t) ** 4 * t ** 6 * p6[0] + 120 * (1 - t) ** 3 * t ** 7 * p7[0] + 45 * (1 - t) ** 2 * t ** 8 * p8[0] + 10 * (1 - t) * t ** 9 * p9[0] + t ** 10 * p10[0]
-    y = (1 - t) ** 10 * p0[1] + 10 * (1 - t) ** 9 * t * p1[1] + 45 * (1 - t) ** 8 * t ** 2 * p2[1] + 120 * (1 - t) ** 7 * t ** 3 * p3[1] + 210 * (1 - t) ** 6 * t ** 4 * p4[1] + 252 * (
-        1 - t) ** 5 * t ** 5 * p5[1] + 210 * (1 - t) ** 4 * t ** 6 * p6[1] + 120 * (1 - t) ** 3 * t ** 7 * p7[1] + 45 * (1 - t) ** 2 * t ** 8 * p8[1] + 10 * (1 - t) * t ** 9 * p9[1] + t ** 10 * p10[1]
+    x = (1 - t) ** 10 * p0[0] + 10 * (1 - t) ** 9 * t * p1[0] + 45 * (1 - t) ** 8 * t ** 2 * p2[0] + 120 * (
+            1 - t) ** 7 * t ** 3 * p3[0] + 210 * (1 - t) ** 6 * t ** 4 * p4[0] + 252 * (
+                1 - t) ** 5 * t ** 5 * p5[0] + 210 * (1 - t) ** 4 * t ** 6 * p6[0] + 120 * (1 - t) ** 3 * t ** 7 * p7[
+            0] + 45 * (1 - t) ** 2 * t ** 8 * p8[0] + 10 * (1 - t) * t ** 9 * p9[0] + t ** 10 * p10[0]
+    y = (1 - t) ** 10 * p0[1] + 10 * (1 - t) ** 9 * t * p1[1] + 45 * (1 - t) ** 8 * t ** 2 * p2[1] + 120 * (
+            1 - t) ** 7 * t ** 3 * p3[1] + 210 * (1 - t) ** 6 * t ** 4 * p4[1] + 252 * (
+                1 - t) ** 5 * t ** 5 * p5[1] + 210 * (1 - t) ** 4 * t ** 6 * p6[1] + 120 * (1 - t) ** 3 * t ** 7 * p7[
+            1] + 45 * (1 - t) ** 2 * t ** 8 * p8[1] + 10 * (1 - t) * t ** 9 * p9[1] + t ** 10 * p10[1]
     return x, y
 
 
@@ -1107,26 +1321,26 @@ def bezier(points):
         b_points = []
         # xy要顛倒
         b_points.append((points[i][1], points[i][0]))
-        b_points.append((points[(i+1) % len(points)][1],
-                        points[(i+1) % len(points)][0]))
-        b_points.append((points[(i+2) % len(points)][1],
-                        points[(i+2) % len(points)][0]))
-        b_points.append((points[(i+3) % len(points)][1],
-                        points[(i+3) % len(points)][0]))
-        b_points.append((points[(i+4) % len(points)][1],
-                        points[(i+4) % len(points)][0]))
-        b_points.append((points[(i+5) % len(points)][1],
-                        points[(i+5) % len(points)][0]))
-        b_points.append((points[(i+6) % len(points)][1],
-                        points[(i+6) % len(points)][0]))
-        b_points.append((points[(i+7) % len(points)][1],
-                        points[(i+7) % len(points)][0]))
-        b_points.append((points[(i+8) % len(points)][1],
-                        points[(i+8) % len(points)][0]))
-        b_points.append((points[(i+9) % len(points)][1],
-                        points[(i+9) % len(points)][0]))
-        b_points.append((points[(i+10) % len(points)][1],
-                        points[(i+10) % len(points)][0]))
+        b_points.append((points[(i + 1) % len(points)][1],
+                         points[(i + 1) % len(points)][0]))
+        b_points.append((points[(i + 2) % len(points)][1],
+                         points[(i + 2) % len(points)][0]))
+        b_points.append((points[(i + 3) % len(points)][1],
+                         points[(i + 3) % len(points)][0]))
+        b_points.append((points[(i + 4) % len(points)][1],
+                         points[(i + 4) % len(points)][0]))
+        b_points.append((points[(i + 5) % len(points)][1],
+                         points[(i + 5) % len(points)][0]))
+        b_points.append((points[(i + 6) % len(points)][1],
+                         points[(i + 6) % len(points)][0]))
+        b_points.append((points[(i + 7) % len(points)][1],
+                         points[(i + 7) % len(points)][0]))
+        b_points.append((points[(i + 8) % len(points)][1],
+                         points[(i + 8) % len(points)][0]))
+        b_points.append((points[(i + 9) % len(points)][1],
+                         points[(i + 9) % len(points)][0]))
+        b_points.append((points[(i + 10) % len(points)][1],
+                         points[(i + 10) % len(points)][0]))
         b_points = np.array(b_points)
 
         # 生成更多點以繪製曲線
