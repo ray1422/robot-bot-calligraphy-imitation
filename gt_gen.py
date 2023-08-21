@@ -3,7 +3,8 @@
 This program searches for the coefficients of affine transformations 
 between calibration images to minimize the differences between styles.
 """
-
+import logging
+import os
 import traceback
 from typing import List, Optional, Tuple, Union
 import numpy as np
@@ -13,6 +14,8 @@ import matplotlib.pyplot as plt
 
 # use gtk backend for matplotlib
 import matplotlib
+
+
 # matplotlib.use('TKAgg')
 
 
@@ -47,7 +50,7 @@ def my_transform(x: np.array, params: List[float]) -> np.array:
         [shear_y, 1, 0],
         [0, 0, 1]
     ], dtype=float)
-    affine_param = m_rotate @ m_trans @ m_scale @ m_shear # TODO optimize
+    affine_param = m_rotate @ m_trans @ m_scale @ m_shear  # TODO optimize
     # padding with 0
     y_ = cv2.warpAffine(x, affine_param[:2, :], (x.shape[1], x.shape[0]),
                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
@@ -78,6 +81,7 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
     param y: input image with type array of np.float32
     return: optimized coefficient of affine transformation. None if failed.
     """
+
     def _loss_func(params) -> float:
         """
         :param x: src image with type array of np.float32, normalized to [0, 1]
@@ -101,11 +105,14 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
     grid = [
         (0, height // 4, height // 4 // 3),  # trans_x
         (0, width // 4, width // 4 // 3),  # trans_y
-        (-0.52, 0.52,  0.34),  # angle from -30 deg to 30 deg but in radian
-        (scale_range[0], scale_range[1], (scale_range[1] - scale_range[0]) / 3),  # scale_x
-        (scale_range[0], scale_range[1], (scale_range[1] - scale_range[0]) / 3),  # scale_y
-        (-0.3, 0.3,  0.2),  # shear_x
-        (-0.3, 0.3,  0.2),  # shear_y
+        (-0.52, 0.52, 0.34),  # angle from -30 deg to 30 deg but in radian
+        (scale_range[0], scale_range[1],
+         (scale_range[1] - scale_range[0]) / 3),  # scale_x
+        (scale_range[0], scale_range[1],
+         (scale_range[1] - scale_range[0]) / 3),  # scale_y
+        (-0.3, 0.3, 0.2),  # shear_x
+        (-0.3, 0.3, 0.2),  # shear_y
+
     ]
     result = None
     last_loss = np.inf
@@ -117,14 +124,14 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
                 full_output=True
             )
 
-            print(f"step {step} loss {loss: 3.2e}")
+            logging.debug(f"step {step} loss {loss: 3.2e}")
             if loss > last_loss:
                 pass
-                print("loss increased, early stop")
+                logging.debug("loss increased, early stop")
                 break
             last_loss = loss
             result = _result
-            print(result)
+            logging.debug(result)
 
             # search in smaller range with more precision
             for i, item in enumerate(result.tolist()):
@@ -139,7 +146,7 @@ def find_stroke_transform(x: np.ndarray, y: np.ndarray) -> Optional[np.ndarray]:
     return result if last_loss < EPS else None
 
 
-def main():
+def gt_gen_test():
     img_a = enhance_image(cv2.imread("sample_data/stroke_d.png"))
     img_b = enhance_image(cv2.imread("sample_data/stroke_c.png"))
     img_b = cv2.resize(img_b, (img_a.shape[1], img_a.shape[0]))
@@ -161,6 +168,43 @@ def main():
     ax3.set_title("y'")
     # plt.show()
     plt.savefig("output.png")
+
+
+def main():
+    dataset_dir = "./datasets/stroke_new"
+    styles_prefix = ("s0", "s1")
+    for char_name in os.listdir(dataset_dir):
+        char_dir = os.path.join(dataset_dir, char_name)
+
+        for i in range(0, 30):
+            # if both s{i}a.png and s0_{i} and s1_{i} exists, calculate transform
+            images = []
+            for style_prefix in styles_prefix:
+                img_path = os.path.join(char_dir, f"{style_prefix}_{i}.png")
+                if os.path.exists(img_path):
+                    # openCV can't deal with unicode path, so use numpy to read image
+                    img = cv2.imdecode(np.fromfile(
+                        img_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    images.append(img)
+            if len(images) == 0:
+                break
+            if len(images) != len(styles_prefix):
+                # invalid data
+                print(f"invalid data {char_name} {i}")
+                continue
+            img_a = enhance_image(images[0])
+            img_b = enhance_image(images[1])
+            try:
+                ret = find_stroke_transform(img_a, img_b)
+            except Exception as e:
+                traceback.print_exc()
+                break
+            if ret is None:
+                print(f"cannot find stroke transform {char_name} {i}")
+                break
+            # save transform as numpy array
+            np.save(os.path.join(char_dir, f"transform_{i}.npy"), ret)
+            print(f"found transform {char_name} {i}")
 
 
 if __name__ == "__main__":
