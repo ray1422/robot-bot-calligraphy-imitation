@@ -4,8 +4,8 @@ from sim import CalSimSimple
 
 
 def main():
-    trace_file = "char00900_stroke.txt"
-    output_dir = "char00900_stroke"
+    trace_file = "char00554_stroke.txt"
+    output_dir = "char00554_stroke"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     full_sim = CalSimSimple(file=trace_file)

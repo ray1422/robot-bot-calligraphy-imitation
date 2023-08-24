@@ -93,14 +93,19 @@ class CalSimSimple(CalSim):
         # split the trace into strokes if height >= 11
         start_idx = 0
         ret = []
-        for i, (x, y, z) in enumerate(self.trace_3d):
+        flg = False
+        for i, (x, y, z) in enumerate(self.trace_3d + [[0, 0, 255]]):
             # print("z", z)
             if z >= 11:
+                if not flg:
+                    continue
                 if i - start_idx <= 1:
                     start_idx = i+1
+                    flg = False
                     continue
                 ret.append(CalSimTrans3D(trace=self.trace[start_idx:i-1].copy(), boundary=self.boundary.copy()))
                 start_idx = i+1
+            flg = True
         return ret
 
     @staticmethod
