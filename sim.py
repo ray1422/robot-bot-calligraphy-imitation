@@ -197,7 +197,8 @@ class CalSimTrans3D(CalSimSimple):
         params are (affine on x-z plane, bias on y)
         """
         # parameters for affine transformation
-        trans_x, trans_y, angle, scale_x, scale_y, shear_x, shear_y, z_bias = params
+        # trans_x, trans_y, angle, scale_x, scale_y, shear_x, shear_y, z_bias = params
+        trans_x, trans_y, angle, scale_x, scale_y, z_bias = params
 
         # rotation angle in radian, scale in percentage
         m_rotate = np.asarray([
@@ -216,12 +217,13 @@ class CalSimTrans3D(CalSimSimple):
             [0, scale_y, 0],
             [0, 0, 1]
         ], dtype=float)
-        m_shear = np.asarray([
-            [1, shear_x, 0],
-            [shear_y, 1, 0],
-            [0, 0, 1]
-        ], dtype=float)
-        affine_param = m_rotate @ m_trans @ m_scale @ m_shear  # TODO optimize
+        # m_shear = np.asarray([
+        #     [1, shear_x, 0],
+        #     [shear_y, 1, 0],
+        #     [0, 0, 1]
+        # ], dtype=float)
+        affine_param = m_rotate @ m_trans @ m_scale  # TODO optimize
+        # affine_param = m_rotate @ m_trans @ m_scale @ m_shear  # TODO optimize
         new_trace = []
         for i, (x, y, z) in enumerate(self.trace_3d):
             x, y = np.matmul(affine_param, np.array([x, y, 1]))
