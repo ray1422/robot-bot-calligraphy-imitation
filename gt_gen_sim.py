@@ -21,22 +21,44 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
     """
 
     def _loss_func(params: List[float]) -> float:
+        # loss is defined as IoU, but the background is white
+        # so we need to invert the image
         transformed = sim_obj.transform(params)
-        loss = np.sum(np.abs(transformed.get_image() - target_image))
+        intersection = np.sum(
+            np.logical_and(
+                transformed.get_image() == 0,
+                target_image == 0
+            )
+        )
+        union = np.sum(
+            np.logical_or(
+                transformed.get_image() == 0,
+                target_image == 0
+            )
+        )
+        # mse = np.mean(
+        #     np.square(
+        #         transformed.get_image() - target_image
+        #     )
+        # )
+        loss = 1 - intersection / union 
+        # loss = mse
+        # transformed = sim_obj.transform(params)
+        # loss = np.sum(np.abs(transformed.get_image() - target_image))
         return loss
 
     height = width = 256
     scale_range = (0.5, 2.0)
     grid = [
-        (0, height // 4, height // 4 // 3),  # trans_x
-        (0, width // 4, width // 4 // 3),  # trans_y
-        (-1.7, 1.7, 1.),  # angle from -90 deg to 90 deg but in radian
+        (0, height // 4, height // 4 // 4),  # trans_x
+        (0, width // 4, width // 4 // 4),  # trans_y
+        (-1.57, 1.57, 1.57 / 4),  # angle from -90 deg to 90 deg but in radian
         (scale_range[0], scale_range[1],
-         (scale_range[1] - scale_range[0]) / 3),  # scale_x
+         (scale_range[1] - scale_range[0]) / 4),  # scale_x
         (scale_range[0], scale_range[1],
-         (scale_range[1] - scale_range[0]) / 3),  # scale_y
-        (-0.3, 0.3, 0.2),  # shear_x
-        (-0.3, 0.3, 0.2),  # shear_y
+         (scale_range[1] - scale_range[0]) / 4),  # scale_y
+        # (-0.3, 0.3, 0.2),  # shear_x
+        # (-0.3, 0.3, 0.2),  # shear_y
         (-1.0, 1.0, .8),  # height
     ]
 
@@ -53,15 +75,12 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
         )
         print(result, loss)
 
-        if last_loss - loss < 1e-3:
-            return result
-
         if loss < last_loss:
             last_loss = loss
             for j in range(len(grid)):
                 delta = (grid[j][2] / 2)
-                grid[j] = [result[j] - delta, result[j] + delta, delta / 2]
-            last_result = result
+                grid[j] = [result[j] - delta, result[j] + delta, delta * 2 / 3]
+            last_result = result.copy()
 
         else:
             return last_result
