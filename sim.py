@@ -169,7 +169,7 @@ class CalSimSimple(CalSim):
         # total width and height is 256
         # scale to 224X224 and the rest is padding
 
-        canvas = np.ones((256, 256), dtype=np.uint8) * 255
+        canvas = np.ones((self.boundary[1], self.boundary[3]), dtype=np.uint8) * 255
 
         for i in range(0, (len(self.trace_3d) - 1)):
             # print(self.trace_3d[i])
