@@ -94,7 +94,7 @@ class CalSimSimple(CalSim):
             return trans_x(x), trans_y(y), z
 
         self.trace_3d = list(map(trans_xyz, self.trace_3d))
-        self.bounds = [0, boundary, 0, boundary]
+        self.boundary = [0, boundary, 0, boundary]
 
     def load_trace_from_file(self, file_path) -> np.ndarray:
         """
@@ -168,8 +168,8 @@ class CalSimSimple(CalSim):
     def get_image(self) -> np.ndarray:
         # total width and height is 256
         # scale to 224X224 and the rest is padding
-
-        canvas = np.ones((self.boundary[1], self.boundary[3]), dtype=np.uint8) * 255
+        
+        canvas = np.ones((int(self.boundary[1]), int(self.boundary[3])), dtype=np.uint8) * 255
 
         for i in range(0, (len(self.trace_3d) - 1)):
             # print(self.trace_3d[i])

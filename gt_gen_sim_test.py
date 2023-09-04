@@ -1,6 +1,6 @@
 from gt_gen_sim import *
 if __name__ == '__main__':
-    cal_sim = CalSimSimple(file='test_strokes/char00553_stroke.txt')
+    cal_sim = CalSimSimple(file='test_strokes/char00482_stroke.txt')
     sims = cal_sim.split_strokes()
     # just test the first stroke
     sim: CalSimTrans3D = CalSimTrans3D.from_cal_sim_simple(sims[0])
