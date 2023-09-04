@@ -55,6 +55,7 @@ class CalSimSimple(CalSim):
 
     def __init__(self, trace=None, trace_3d=None, file=None, boundary=None) -> None:
         super().__init__()
+        # [x_min, x_max, y_min, y_max] where x is the horizontal axis and y is the vertical axis
         self.boundary = boundary
         self.trace_3d = None
         self.trace = None
@@ -75,6 +76,25 @@ class CalSimSimple(CalSim):
             self.boundary[1] = max([x[0] for x in self.trace_3d if x[2] < 10])
             self.boundary[2] = min([x[1] for x in self.trace_3d if x[2] < 10])
             self.boundary[3] = max([x[1] for x in self.trace_3d if x[2] < 10])
+
+        self._adjust_trace_boundary()
+
+    def _adjust_trace_boundary(self, boundary=256):
+        scale = min(int(boundary * 0.875) / (self.boundary[1] - self.boundary[0]),
+                    int(boundary * 0.875) / (self.boundary[3] - self.boundary[2]))
+
+        def trans_x(x): return int((x - self.boundary[0]) * scale) + int(
+            boundary - (self.boundary[1] - self.boundary[0]) * scale)//2
+
+        def trans_y(y): return 256 - int((y - self.boundary[2]) * scale) - int(
+            boundary - (self.boundary[3] - self.boundary[2]) * scale)//2
+
+        def trans_xyz(u):
+            x, y, z = u
+            return trans_x(x), trans_y(y), z
+
+        self.trace_3d = list(map(trans_xyz, self.trace_3d))
+        self.bounds = [0, boundary, 0, boundary]
 
     def load_trace_from_file(self, file_path) -> np.ndarray:
         """
@@ -148,21 +168,15 @@ class CalSimSimple(CalSim):
     def get_image(self) -> np.ndarray:
         # total width and height is 256
         # scale to 224X224 and the rest is padding
-        scale = min(224 / (self.boundary[1] - self.boundary[0]),
-                    224 / (self.boundary[3] - self.boundary[2]))
 
-        def trans_x(x): return int((x - self.boundary[0]) * scale) + int(
-            256 - (self.boundary[1] - self.boundary[0]) * scale)//2
-        def trans_y(y): return 256 - int((y - self.boundary[2]) * scale) - int(
-            256 - (self.boundary[3] - self.boundary[2]) * scale)//2
         canvas = np.ones((256, 256), dtype=np.uint8) * 255
 
         for i in range(0, (len(self.trace_3d) - 1)):
             # print(self.trace_3d[i])
-            x = [trans_x(self.trace_3d[i][0]),
-                 trans_x(self.trace_3d[i + 1][0])]
-            y = [trans_y(self.trace_3d[i][1]),
-                 trans_y(self.trace_3d[i + 1][1])]
+            x = [int(self.trace_3d[i][0]),
+                 int(self.trace_3d[i + 1][0])]
+            y = [int(self.trace_3d[i][1]),
+                 int(self.trace_3d[i + 1][1])]
             h = (float(self.trace_3d[i][2]) +
                  float(self.trace_3d[i + 1][2])) * 0.5
 
@@ -234,9 +248,10 @@ class CalSimTrans3D(CalSimSimple):
 
 if __name__ == "__main__":
     # test
-    trace_file = "./char00900_stroke.txt"
+    trace_file = "./test_strokes/char00482_stroke.txt"
     sim = CalSimSimple(file=trace_file)
-    sim.get_image()
+    img = sim.get_image()
+    cv2.imwrite("./test.png", img)
     print("done")
 
 # the following are from legacy code. don't touch it and even use it.
