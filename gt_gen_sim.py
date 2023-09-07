@@ -41,7 +41,7 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
         #         transformed.get_image() - target_image
         #     )
         # )
-        loss = 1 - intersection / union 
+        loss = 1 - intersection / union
         # loss = mse
         # transformed = sim_obj.transform(params)
         # loss = np.sum(np.abs(transformed.get_image() - target_image))
@@ -87,13 +87,13 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
 
 
 if __name__ == '__main__':
-    cal_sim = CalSimSimple(file='char00900_stroke.txt')
+    cal_sim = CalSimSimple(file='test_strokes/char00482_stroke.txt')
     sims = cal_sim.split_strokes()
     # just test the first stroke
-    sim: CalSimTrans3D = CalSimTrans3D.from_cal_sim_simple(sims[0])
+    sim: CalSimTrans3D = CalSimTrans3D.from_cal_sim_simple(sims[1])
     from_img = sim.get_image()
     cv2.imwrite('from_img.png', from_img)
-    target_image = cv2.imread('target_img.png', cv2.IMREAD_GRAYSCALE)
+    target_image = cv2.imread('test_strokes/tmp1_1.jpg', cv2.IMREAD_GRAYSCALE)
 
     params = search_params(sim, target_image)
 

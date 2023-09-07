@@ -77,7 +77,7 @@ class CalSimSimple(CalSim):
             self.boundary[2] = min([x[1] for x in self.trace_3d if x[2] < 10])
             self.boundary[3] = max([x[1] for x in self.trace_3d if x[2] < 10])
 
-        self._adjust_trace_boundary()
+            self._adjust_trace_boundary()
 
     def _adjust_trace_boundary(self, boundary=256):
         scale = min(int(boundary * 0.875) / (self.boundary[1] - self.boundary[0]),
@@ -123,7 +123,7 @@ class CalSimSimple(CalSim):
                     start_idx = i+1
                     flg = False
                     continue
-                ret.append(CalSimTrans3D(trace=self.trace[start_idx:i-1].copy(), boundary=self.boundary.copy()))
+                ret.append(CalSimTrans3D(trace_3d=self.trace_3d[start_idx:i-1].copy(), boundary=self.boundary.copy()))
                 start_idx = i+1
             flg = True
         return ret
@@ -179,10 +179,12 @@ class CalSimSimple(CalSim):
                  int(self.trace_3d[i + 1][1])]
             h = (float(self.trace_3d[i][2]) +
                  float(self.trace_3d[i + 1][2])) * 0.5
+            
 
             width = 2 * (5.5 - h)
             if width < 1:
                 continue
+            
             # width = 1 # TODO
             # plt.plot(x, y, 'k', color="c", linewidth=width)
             # draw line with OpenCV
@@ -203,7 +205,10 @@ class CalSimTrans3D(CalSimSimple):
         """
         convert CalSimSimple to CalSimTrans3D
         """
-        return CalSimTrans3D(trace=sim.trace.copy(), boundary=sim.boundary.copy())
+        if sim.trace_3d is None:
+            return CalSimTrans3D(trace=sim.trace.copy(), boundary=sim.boundary.copy())
+        else:
+            return CalSimTrans3D(trace_3d=sim.trace_3d.copy(), boundary=sim.boundary.copy())
 
     def transform(self, params) -> "CalSimTrans3D":
         """
