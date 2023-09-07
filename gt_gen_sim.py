@@ -14,10 +14,11 @@ import scipy.optimize
 from sim import CalSimSimple, CalSimTrans3D
 
 
-def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
+def search_params(sim_obj: CalSimTrans3D, target_image) -> (np.ndarray, float):
     """
     :param path: path are 3d points with shape (n, 3)
     :param params: params are (affine on x-z plane, bias on y)
+    :return: params and loss
     """
 
     def _loss_func(params: List[float]) -> float:
@@ -47,16 +48,102 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
         # loss = np.sum(np.abs(transformed.get_image() - target_image))
         return loss
 
+    # first of all, align the center
+    from_img = sim_obj.get_image()
+    _, th = cv2.threshold(from_img, 0, 32, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # find bounding box
+    # take the largest connected component
+    cnts, _ = cv2.findContours(
+        th,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+    cnt_1 = max(cnts, key=cv2.contourArea)
+    _, th = cv2.threshold(target_image, 0, 32, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    cnts, _ = cv2.findContours(
+        th,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+    cnt_2 = max(cnts, key=cv2.contourArea)
+
+    # find the center of the bounding box
+    x1, y1, w1, h1 = cv2.boundingRect(cnt_1)
+    x2, y2, w2, h2 = cv2.boundingRect(cnt_2)
+
+        
+    center_1 = np.array([x1 + w1 / 2, y1 + h1 / 2])
+    center_2 = np.array([x2 + w2 / 2, y2 + h2 / 2])
+    # calculate the translation
+    scale_x = w2 / w1
+    scale_y = h2 / h1
+    rotate = 0.
+    loss_min = np.inf
+    rotate = cv2.ROTATE_90_CLOCKWISE
+    if scale_x / scale_y > 3 or scale_y / scale_x > 3:
+        # test rotate 90 degree clockwise or counter-clockwise
+        crop_from = from_img[y1:y1+h1, x1:x1+w1].copy()
+        for deg in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            crop_from_rotated = cv2.rotate(crop_from.copy(), deg)
+            crop_from_rotated = cv2.resize(crop_from_rotated, (w2, h2))
+            target_image_crop = target_image[y2:y2+h2, x2:x2+w2].copy()
+            # loss is defined as IoU, but the background is white and the stroke is black
+            intersection = np.sum(
+                np.logical_and(
+                    crop_from_rotated == 0,
+                    target_image_crop == 0
+                )
+            )
+            union = np.sum(
+                np.logical_or(
+                    crop_from_rotated == 0,
+                    target_image_crop == 0
+                )
+            )
+            loss = 1 - intersection / union
+            # print(loss)
+            if loss < loss_min:
+                loss_min = loss
+                from_img = crop_from_rotated
+                rotate = deg
+        # calculate the translation
+        scale_x = w2 / h1
+        scale_y = h2 / w1
+        rotate = 1.57 if rotate == cv2.ROTATE_90_CLOCKWISE else -1.57 # y axis is flipped so the rotation is flipped
+        # calculate new center after rotation
+        # maps to polar coordinate
+        
+        r = np.sqrt(center_1[0] ** 2 + center_1[1] ** 2)
+        theta = np.arctan2(center_1[1], center_1[0])
+        # rotate
+        theta += rotate
+        # maps back to cartesian coordinate
+        center_1 = np.array([r * np.cos(theta), r * np.sin(theta)])
+ 
+
+    
+    shift_x = center_2[0] - center_1[0] * scale_x
+    shift_y = center_2[1] - center_1[1] * scale_y
+ 
+
+    # save initial guess
+    sim2 = sim_obj.transform([shift_x, shift_y, rotate, scale_x, scale_y, 0])
+    from_img = sim2.get_image()
+    cv2.imwrite('from_img.png', from_img)
+    
+    # print(shift_x, shift_y, scale_x, scale_y, rotate)
     height = width = 256
     scale_range = (0.5, 2.0)
     grid = [
-        (0, height // 4, height // 4 // 4),  # trans_x
-        (0, width // 4, width // 4 // 4),  # trans_y
-        (-1.57, 1.57, 1.57 / 4),  # angle from -90 deg to 90 deg but in radian
-        (scale_range[0], scale_range[1],
-         (scale_range[1] - scale_range[0]) / 4),  # scale_x
-        (scale_range[0], scale_range[1],
-         (scale_range[1] - scale_range[0]) / 4),  # scale_y
+        (shift_x - height // 8, shift_x+height // 8, height // 4 // 4),  # trans_x
+        (shift_y - width // 9, shift_y + width // 8, width // 4 // 4),  # trans_y
+        (-1.57, 1.57, 1.57 / 8),  # angle from -90 deg to 90 deg but in radian
+        # (scale_range[0], scale_range[1],
+        #  (scale_range[1] - scale_range[0]) / 4),  # scale_x
+        # (scale_range[0], scale_range[1],
+        #  (scale_range[1] - scale_range[0]) / 4),  # scale_y
+        (scale_x * .8, scale_x * 1.25, 0.15),  # scale_x
+        (scale_y * .8, scale_y * 1.25, 0.15),  # scale_y
         # (-0.3, 0.3, 0.2),  # shear_x
         # (-0.3, 0.3, 0.2),  # shear_y
         (-1.0, 1.0, .8),  # height
@@ -73,7 +160,7 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
             grid,
             full_output=True
         )
-        print(result, loss)
+        # print(result, loss)
 
         if loss < last_loss:
             last_loss = loss
@@ -83,7 +170,9 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> np.ndarray:
             last_result = result.copy()
 
         else:
-            return last_result
+            return last_result, last_loss
+    
+    return last_result, last_loss
 
 
 if __name__ == '__main__':
@@ -95,7 +184,7 @@ if __name__ == '__main__':
     cv2.imwrite('from_img.png', from_img)
     target_image = cv2.imread('test_strokes/tmp1_1.jpg', cv2.IMREAD_GRAYSCALE)
 
-    params = search_params(sim, target_image)
+    params, loss = search_params(sim, target_image)
 
     result = sim.transform(params)
     result_img = result.get_image()

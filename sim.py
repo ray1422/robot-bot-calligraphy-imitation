@@ -168,7 +168,7 @@ class CalSimSimple(CalSim):
     def get_image(self) -> np.ndarray:
         # total width and height is 256
         # scale to 224X224 and the rest is padding
-        
+
         canvas = np.ones((int(self.boundary[1]), int(self.boundary[3])), dtype=np.uint8) * 255
 
         for i in range(0, (len(self.trace_3d) - 1)):
@@ -179,12 +179,13 @@ class CalSimSimple(CalSim):
                  int(self.trace_3d[i + 1][1])]
             h = (float(self.trace_3d[i][2]) +
                  float(self.trace_3d[i + 1][2])) * 0.5
-            
+
+            # print(x, y, h)
 
             width = 2 * (5.5 - h)
             if width < 1:
                 continue
-            
+
             # width = 1 # TODO
             # plt.plot(x, y, 'k', color="c", linewidth=width)
             # draw line with OpenCV
@@ -214,15 +215,23 @@ class CalSimTrans3D(CalSimSimple):
         """
         apply transformation to the trace and return a new CalSimTrans3D object
         params are (affine on x-z plane, bias on y)
+        the order of the transformation is:
+            1. rotation
+            2. translation
+            3. scale
+        m_trans @ m_scale @ m_rotate, as the result, the order is reversed,
+        where `@` is matrix multiplication
         """
         # parameters for affine transformation
         # trans_x, trans_y, angle, scale_x, scale_y, shear_x, shear_y, z_bias = params
+        # trans_x, trans_y, angle, scale_x, scale_y, shear_x, z_bias = params
         trans_x, trans_y, angle, scale_x, scale_y, z_bias = params
 
         # rotation angle in radian, scale in percentage
         m_rotate = np.asarray([
             [np.cos(angle), -np.sin(angle), 0],
-            [np.sin(angle), np.cos(angle), 0]
+            [np.sin(angle), np.cos(angle), 0],
+            [0, 0, 1]
         ], dtype=float)
 
         # translation in pixel
@@ -238,14 +247,17 @@ class CalSimTrans3D(CalSimSimple):
         ], dtype=float)
         # m_shear = np.asarray([
         #     [1, shear_x, 0],
-        #     [shear_y, 1, 0],
+        #     [0, 1, 0],
         #     [0, 0, 1]
         # ], dtype=float)
-        affine_param = m_rotate @ m_trans @ m_scale  # TODO optimize
-        # affine_param = m_rotate @ m_trans @ m_scale @ m_shear  # TODO optimize
+        affine_param = m_trans @ m_scale @ m_rotate  # NOTE: the order is important
+        # affine_param = m_trans @ m_scale @ m_rotate @ m_shear  # TODO optimize
         new_trace = []
         for i, (x, y, z) in enumerate(self.trace_3d):
-            x, y = np.matmul(affine_param, np.array([x, y, 1]))
+            # x, y, d = np.matmul(affine_param, np.array([[x], [y], [1]]))
+            x, y, d = np.matmul(affine_param, np.array([x, y, 1]))
+            x, y = x / d, y / d
+            # print(x, y, z)
             new_trace.append([x, y, z + z_bias])
 
         return CalSimTrans3D(trace_3d=new_trace, boundary=self.boundary.copy())
@@ -258,6 +270,15 @@ if __name__ == "__main__":
     img = sim.get_image()
     cv2.imwrite("./test.png", img)
     print("done")
+    # test rotation
+    trace_file = "./test_strokes/char00600_stroke.txt"
+    sim = CalSimSimple(file=trace_file)
+    sim = CalSimTrans3D.from_cal_sim_simple(sim)
+    # trans_x, trans_y, angle, scale_x, scale_y, z_bias
+    sim = sim.transform([0, 255, -1.57, 1, 1, 0])
+    img = sim.get_image()
+    cv2.imwrite("./test.png", img)
+
 
 # the following are from legacy code. don't touch it and even use it.
 # I just copied them here and referenced them.
