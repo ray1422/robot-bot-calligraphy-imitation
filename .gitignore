@@ -163,3 +163,7 @@ cython_debug/
 logs
 legacies
 checkpoints
+
+*from*.png
+*result*.png
+test_strokes
