@@ -44,7 +44,7 @@ class CalSim(ABC):
 
 class CalSimSimple(CalSim):
     """
-    CalSimSimple is a simple simulator that only consider the distance between 
+    CalSimSimple is a simple simulator that only consider the distance between
     the brush and the paper.
     :param trace: the trace of the brush. it should be a 2d numpy array with shape (n, 2).
     :param file: the path of the trace file. it should be a txt file with the following format:
@@ -53,17 +53,21 @@ class CalSimSimple(CalSim):
 
     """
 
-    def __init__(self, trace=None, trace_3d=None, file=None, boundary=None) -> None:
+    def __init__(
+        self, trace=None, trace_3d=None, file=None, boundary=None, oriboundary=None
+    ) -> None:
         super().__init__()
         # [x_min, x_max, y_min, y_max] where x is the horizontal axis and y is the vertical axis
         self.boundary = boundary
         self.trace_3d = None
         self.trace = None
+        self.scale = None
+        self.oriboundary = oriboundary
 
         if trace_3d is not None:
             self.trace_3d = trace_3d
         elif trace is not None:
-            self.trace = trace
+            self.trace = trace.copy()
         else:
             self.trace = self.load_trace_from_file(file)
 
@@ -76,18 +80,27 @@ class CalSimSimple(CalSim):
             self.boundary[1] = max([x[0] for x in self.trace_3d if x[2] < 10])
             self.boundary[2] = min([x[1] for x in self.trace_3d if x[2] < 10])
             self.boundary[3] = max([x[1] for x in self.trace_3d if x[2] < 10])
-
+            self.oriboundary = self.boundary.copy()
             self._adjust_trace_boundary()
 
     def _adjust_trace_boundary(self, boundary=256):
-        scale = min(int(boundary * 0.875) / (self.boundary[1] - self.boundary[0]),
-                    int(boundary * 0.875) / (self.boundary[3] - self.boundary[2]))
+        scale = min(
+            int(boundary * 0.875) / (self.boundary[1] - self.boundary[0]),
+            int(boundary * 0.875) / (self.boundary[3] - self.boundary[2]),
+        )
 
-        def trans_x(x): return int((x - self.boundary[0]) * scale) + int(
-            boundary - (self.boundary[1] - self.boundary[0]) * scale)//2
+        def trans_x(x):
+            return (
+                int((x - self.boundary[0]) * scale)
+                + int(boundary - (self.boundary[1] - self.boundary[0]) * scale) // 2
+            )
 
-        def trans_y(y): return 256 - int((y - self.boundary[2]) * scale) - int(
-            boundary - (self.boundary[3] - self.boundary[2]) * scale)//2
+        def trans_y(y):
+            return (
+                256
+                - int((y - self.boundary[2]) * scale)
+                - int(boundary - (self.boundary[3] - self.boundary[2]) * scale) // 2
+            )
 
         def trans_xyz(u):
             x, y, z = u
@@ -95,6 +108,47 @@ class CalSimSimple(CalSim):
 
         self.trace_3d = list(map(trans_xyz, self.trace_3d))
         self.boundary = [0, boundary, 0, boundary]
+
+    def export_to_robot(self, boundary=256):
+        """
+        export the trace to robot
+        WARNING: the Z-axis needs to be adjusted
+
+        :param boundary: the boundary of the output image
+        :return: the trace in robot coordinate
+        """
+        # print(self.oriboundary)
+
+        # calculate the scale from boundary to oriboundary
+        scale = min(
+            int(boundary * 0.875) / (self.oriboundary[1] - self.oriboundary[0]),
+            int(boundary * 0.875) / (self.oriboundary[3] - self.oriboundary[2]),
+        )
+
+        def inverse_trans_or_x(new_x):
+            return (
+                new_x
+                - int(boundary - (self.oriboundary[1] - self.oriboundary[0]) * scale)
+                // 2
+            ) / scale + self.oriboundary[0]
+
+        def inverse_trans_or_y(new_y):
+            return (
+                256
+                - int(boundary - (self.oriboundary[3] - self.oriboundary[2]) * scale)
+                // 2
+                - new_y
+            ) / scale + self.oriboundary[2]
+
+        def inverse_trans_or_xyz(u_adjusted):
+            new_x, new_y, z = u_adjusted
+            x = inverse_trans_or_x(new_x)
+            y = inverse_trans_or_y(new_y)
+            return x, y, z
+
+        ret = list(map(inverse_trans_or_xyz, self.trace_3d))
+        # print(self.trace_3d)
+        return ret
 
     def load_trace_from_file(self, file_path) -> np.ndarray:
         """
@@ -104,7 +158,7 @@ class CalSimSimple(CalSim):
             lines = f.readlines()
             trace = []
             for line in lines:
-                line = line.lstrip().split(' ')
+                line = line.lstrip().split(" ")
                 x, y, z, theta, phi, psi = map(float, line[2:8])
                 trace.append([x, y, z, theta, phi, psi])
             return trace
@@ -120,11 +174,17 @@ class CalSimSimple(CalSim):
                 if not flg:
                     continue
                 if i - start_idx <= 1:
-                    start_idx = i+1
+                    start_idx = i + 1
                     flg = False
                     continue
-                ret.append(CalSimTrans3D(trace_3d=self.trace_3d[start_idx:i-1].copy(), boundary=self.boundary.copy()))
-                start_idx = i+1
+                ret.append(
+                    CalSimTrans3D(
+                        trace_3d=self.trace_3d[start_idx : i - 1].copy(),
+                        boundary=self.boundary.copy(),
+                        oriboundary=self.oriboundary.copy(),
+                    )
+                )
+                start_idx = i + 1
             flg = True
         return ret
 
@@ -134,17 +194,11 @@ class CalSimSimple(CalSim):
         stroke_n = x, y, z, theta, phi, psi
         theta, phi, psi = map(np.deg2rad, [theta, phi, psi])
         a, b, c = theta, phi, psi
-        r_a = [1, 0, 0,
-               0, math.cos(a), -1 * math.sin(a),
-               0, math.sin(a), math.cos(a)]
+        r_a = [1, 0, 0, 0, math.cos(a), -1 * math.sin(a), 0, math.sin(a), math.cos(a)]
 
-        r_b = [math.cos(b), 0, math.sin(b),
-               0, 1, 0,
-               -1 * math.sin(b), 0, math.cos(b)]
+        r_b = [math.cos(b), 0, math.sin(b), 0, 1, 0, -1 * math.sin(b), 0, math.cos(b)]
 
-        r_c = [math.cos(c), -1 * math.sin(c), 0,
-               math.sin(c), math.cos(c), 0,
-               0, 0, 1]
+        r_c = [math.cos(c), -1 * math.sin(c), 0, math.sin(c), math.cos(c), 0, 0, 0, 1]
 
         r_a = np.array(r_a).reshape(3, 3)
         r_b = np.array(r_b).reshape(3, 3)
@@ -152,10 +206,24 @@ class CalSimSimple(CalSim):
 
         r = np.dot(np.dot(r_c, r_b), r_a)
 
-        a = [r[0, 0], r[0, 1], r[0, 2], x,
-             r[1, 0], r[1, 1], r[1, 2], y,
-             r[2, 0], r[2, 1], r[2, 2], z,
-             0, 0, 0, 1]
+        a = [
+            r[0, 0],
+            r[0, 1],
+            r[0, 2],
+            x,
+            r[1, 0],
+            r[1, 1],
+            r[1, 2],
+            y,
+            r[2, 0],
+            r[2, 1],
+            r[2, 2],
+            z,
+            0,
+            0,
+            0,
+            1,
+        ]
         a = np.array(a).reshape((4, 4))
 
         b = np.identity(4)
@@ -169,16 +237,16 @@ class CalSimSimple(CalSim):
         # total width and height is 256
         # scale to 224X224 and the rest is padding
 
-        canvas = np.ones((int(self.boundary[1]), int(self.boundary[3])), dtype=np.uint8) * 255
+        canvas = (
+            np.ones((int(self.boundary[1]), int(self.boundary[3])), dtype=np.uint8)
+            * 255
+        )
 
         for i in range(0, (len(self.trace_3d) - 1)):
             # print(self.trace_3d[i])
-            x = [int(self.trace_3d[i][0]),
-                 int(self.trace_3d[i + 1][0])]
-            y = [int(self.trace_3d[i][1]),
-                 int(self.trace_3d[i + 1][1])]
-            h = (float(self.trace_3d[i][2]) +
-                 float(self.trace_3d[i + 1][2])) * 0.5
+            x = [int(self.trace_3d[i][0]), int(self.trace_3d[i + 1][0])]
+            y = [int(self.trace_3d[i][1]), int(self.trace_3d[i + 1][1])]
+            h = (float(self.trace_3d[i][2]) + float(self.trace_3d[i + 1][2])) * 0.5
 
             # print(x, y, h)
 
@@ -207,9 +275,17 @@ class CalSimTrans3D(CalSimSimple):
         convert CalSimSimple to CalSimTrans3D
         """
         if sim.trace_3d is None:
-            return CalSimTrans3D(trace=sim.trace.copy(), boundary=sim.boundary.copy())
+            return CalSimTrans3D(
+                trace=sim.trace.copy(),
+                boundary=sim.boundary.copy(),
+                oriboundary=sim.oriboundary.copy(),
+            )
         else:
-            return CalSimTrans3D(trace_3d=sim.trace_3d.copy(), boundary=sim.boundary.copy())
+            return CalSimTrans3D(
+                trace_3d=sim.trace_3d.copy(),
+                boundary=sim.boundary.copy(),
+                oriboundary=sim.oriboundary.copy(),
+            )
 
     def transform(self, params) -> "CalSimTrans3D":
         """
@@ -228,23 +304,18 @@ class CalSimTrans3D(CalSimSimple):
         trans_x, trans_y, angle, scale_x, scale_y, z_bias = params
 
         # rotation angle in radian, scale in percentage
-        m_rotate = np.asarray([
-            [np.cos(angle), -np.sin(angle), 0],
-            [np.sin(angle), np.cos(angle), 0],
-            [0, 0, 1]
-        ], dtype=float)
+        m_rotate = np.asarray(
+            [
+                [np.cos(angle), -np.sin(angle), 0],
+                [np.sin(angle), np.cos(angle), 0],
+                [0, 0, 1],
+            ],
+            dtype=float,
+        )
 
         # translation in pixel
-        m_trans = np.asarray([
-            [1, 0, trans_x],
-            [0, 1, trans_y],
-            [0, 0, 1]
-        ], dtype=float)
-        m_scale = np.asarray([
-            [scale_x, 0, 0],
-            [0, scale_y, 0],
-            [0, 0, 1]
-        ], dtype=float)
+        m_trans = np.asarray([[1, 0, trans_x], [0, 1, trans_y], [0, 0, 1]], dtype=float)
+        m_scale = np.asarray([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]], dtype=float)
         # m_shear = np.asarray([
         #     [1, shear_x, 0],
         #     [0, 1, 0],
@@ -260,16 +331,22 @@ class CalSimTrans3D(CalSimSimple):
             # print(x, y, z)
             new_trace.append([x, y, z + z_bias])
 
-        return CalSimTrans3D(trace_3d=new_trace, boundary=self.boundary.copy())
+        return CalSimTrans3D(
+            trace_3d=new_trace,
+            boundary=self.boundary.copy(),
+            oriboundary=self.oriboundary.copy(),
+        )
 
 
 if __name__ == "__main__":
     # test
     trace_file = "./test_strokes/char00482_stroke.txt"
+    # trace_file = "./output.txt"
     sim = CalSimSimple(file=trace_file)
     img = sim.get_image()
     cv2.imwrite("./test.png", img)
     print("done")
+    # exit()
     # test rotation
     trace_file = "./test_strokes/char00600_stroke.txt"
     sim = CalSimSimple(file=trace_file)
@@ -293,7 +370,7 @@ class _LegacySim:
     def paint_from_file(self, file_path) -> None:
         with open(file_path, "r") as f:
             lines = f.readlines()
-            x, y, z, theta, phi, psi = 0., 0., 0., 0., 0., 0.
+            x, y, z, theta, phi, psi = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
             try:
                 x, y, z, theta, phi, psi = lines[0].split(" ")[2:8]
                 self.six_d_points.append([x, y, z, theta, phi, psi])
@@ -307,10 +384,10 @@ class _LegacySim:
 
 def legacy_get_6d_3d(path):
     """
-    input: 6 axis txt file 
+    input: 6 axis txt file
     (movl 0 num1 num2 num3 num4 num5 num6 100.0000 stroke1)
 
-    output: (x, y, z, stroke) visualized data 
+    output: (x, y, z, stroke) visualized data
 
     The following is copied from legacy code. don't touch it and even use it.
     """
@@ -318,8 +395,7 @@ def legacy_get_6d_3d(path):
     i = 2
     with open(path) as txtFile:
         for row in txtFile:
-
-            row = row.lstrip().split(',')  # for csv file
+            row = row.lstrip().split(",")  # for csv file
             # row = row.lstrip().split(' ')  # for txt file
             x = float(row[0 + i])
             y = float(row[1 + i])
@@ -329,17 +405,41 @@ def legacy_get_6d_3d(path):
             c = angle2deg(float(row[5 + i]))
             stroke_n = row[-1]
 
-            Ra = [1, 0, 0,
-                  0, math.cos(a), -1 * math.sin(a),
-                  0, math.sin(a), math.cos(a)]
+            Ra = [
+                1,
+                0,
+                0,
+                0,
+                math.cos(a),
+                -1 * math.sin(a),
+                0,
+                math.sin(a),
+                math.cos(a),
+            ]
 
-            Rb = [math.cos(b), 0, math.sin(b),
-                  0, 1, 0,
-                  -1 * math.sin(b), 0, math.cos(b)]
+            Rb = [
+                math.cos(b),
+                0,
+                math.sin(b),
+                0,
+                1,
+                0,
+                -1 * math.sin(b),
+                0,
+                math.cos(b),
+            ]
 
-            Rc = [math.cos(c), -1 * math.sin(c), 0,
-                  math.sin(c), math.cos(c), 0,
-                  0, 0, 1]
+            Rc = [
+                math.cos(c),
+                -1 * math.sin(c),
+                0,
+                math.sin(c),
+                math.cos(c),
+                0,
+                0,
+                0,
+                1,
+            ]
 
             Ra = np.array(Ra).reshape(3, 3)
             Rb = np.array(Rb).reshape(3, 3)
@@ -347,10 +447,24 @@ def legacy_get_6d_3d(path):
 
             R = np.dot(np.dot(Rc, Rb), Ra)
 
-            A = [R[0, 0], R[0, 1], R[0, 2], x,
-                 R[1, 0], R[1, 1], R[1, 2], y,
-                 R[2, 0], R[2, 1], R[2, 2], z,
-                 0, 0, 0, 1]
+            A = [
+                R[0, 0],
+                R[0, 1],
+                R[0, 2],
+                x,
+                R[1, 0],
+                R[1, 1],
+                R[1, 2],
+                y,
+                R[2, 0],
+                R[2, 1],
+                R[2, 2],
+                z,
+                0,
+                0,
+                0,
+                1,
+            ]
             A = np.array(A).reshape((4, 4))
 
             B = np.identity(4)
@@ -363,20 +477,20 @@ def legacy_get_6d_3d(path):
     return data
 
 
-class Vi_c():
-    '''
+class Vi_c:
+    """
     this class is legacy code. don't touch it and even use it.
     ***For visualizing component
 
     read_txt: read 3axis txt file to list
     plot: plot from list to image
     savefig: save plot image
-    '''
+    """
 
     def __init__(self, d_path):
         self.d_path = d_path
         self.points = []
-        self.name = ''
+        self.name = ""
         self.fig = None
         self.ax = None
         self.simulator = False  # 是否顯示字體寬度
@@ -384,12 +498,12 @@ class Vi_c():
     def read_txt(self, f_name):
         self.name = f_name[:-4]
         f = []
-        with open(f_name, 'r') as txtFile:
+        with open(f_name, "r") as txtFile:
             rows = txtFile.readlines()
             for row in rows:
-                row = row.rstrip('\n').split(' ')  # for txt
+                row = row.rstrip("\n").split(" ")  # for txt
                 # row = row.rstrip('\n').split(',') # for csv
-                row[-1] = row[-1].strip('stroke')
+                row[-1] = row[-1].strip("stroke")
                 f.append(row)
         self.points = f
 
@@ -397,9 +511,9 @@ class Vi_c():
         self.fig = plt.figure()
 
         self.ax = plt.axes()
-        self.ax.set_xlabel('X', fontdict={'size': 15, 'color': 'k'})
-        self.ax.set_ylabel('Y', fontdict={'size': 15, 'color': 'k'})
-        self.ax.set_title('%s' % c_name, fontproperties='SimSun', fontsize=20)
+        self.ax.set_xlabel("X", fontdict={"size": 15, "color": "k"})
+        self.ax.set_ylabel("Y", fontdict={"size": 15, "color": "k"})
+        self.ax.set_title("%s" % c_name, fontproperties="SimSun", fontsize=20)
         # stroke = 1
         a = np.arange(0, 1, 0.001)
         c = np.random.choice(a, 3, replace=False)
@@ -417,9 +531,9 @@ class Vi_c():
             else:
                 if self.simulator:
                     width = 2 * (5.5 - h)
-                    self.ax.plot(x, y, 'k', color=c, linewidth=width)
+                    self.ax.plot(x, y, "k", color=c, linewidth=width)
                 else:
-                    self.ax.plot(x, y, 'k', color=c)
+                    self.ax.plot(x, y, "k", color=c)
 
                 # plts.append(self.ax.plot(x, y, 'k', color=c, linewidth=width, label='%d' % stroke)[0]) # 會出現相同lebel的bug.
                 # self.ax.plot(x, y, 'k', color=c, linewidth=width)
@@ -431,8 +545,8 @@ class Vi_c():
         pass
 
     def savefig(self, d_save):
-        name = self.name.split('/')[-1].split('\\')[-1]
-        p_save = os.path.join(d_save, '%s.png' % name)
+        name = self.name.split("/")[-1].split("\\")[-1]
+        p_save = os.path.join(d_save, "%s.png" % name)
         # plt.savefig('./data/vis_2d/%s.jpg' % self.name)
 
         plt.savefig(p_save)

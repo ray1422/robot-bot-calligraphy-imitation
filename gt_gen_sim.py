@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import scipy
 import scipy.optimize
+import matplotlib.pyplot as plt
 
 from sim import CalSimSimple, CalSimTrans3D
 
@@ -174,20 +175,61 @@ def search_params(sim_obj: CalSimTrans3D, target_image) -> (np.ndarray, float):
     
     return last_result, last_loss
 
-
 if __name__ == '__main__':
-    cal_sim = CalSimSimple(file='test_strokes/char00482_stroke.txt')
+    cal_sim = CalSimSimple(file='sample_data/char00615_stroke.txt')
     sims = cal_sim.split_strokes()
     # just test the first stroke
-    sim: CalSimTrans3D = CalSimTrans3D.from_cal_sim_simple(sims[1])
+    sim: CalSimTrans3D = CalSimTrans3D.from_cal_sim_simple(sims[0])
     from_img = sim.get_image()
-    cv2.imwrite('from_img.png', from_img)
-    target_image = cv2.imread('test_strokes/tmp1_1.jpg', cv2.IMREAD_GRAYSCALE)
+    
+    #cv2.imwrite('from_img.png', from_img)
+    target_image = cv2.imread('sample_data/tmp1_0.jpg', cv2.IMREAD_GRAYSCALE)
 
     params, loss = search_params(sim, target_image)
 
     result = sim.transform(params)
     result_img = result.get_image()
-    cv2.imwrite('result_img.png', result_img)
-
+    #cv2.imwrite('result_img.png', result_img)
     print(params)
+
+    # show in image
+    fig = plt.figure()
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax1.imshow(from_img, cmap="gray")
+    ax1.set_title("x")
+    ax2 = fig.add_subplot(1, 3, 2, sharey=ax1, sharex=ax1)
+    ax2.imshow(target_image, cmap="gray")
+    ax2.set_title("y")
+    ax3 = fig.add_subplot(1, 3, 3, sharey=ax1, sharex=ax1)
+    ax3.imshow(result_img, cmap="gray")
+    ax3.set_title("y'")
+    # plt.show()
+    plt.savefig("output.png")
+
+
+    #寫到txt file利用機器手臂寫出
+    value_3d = result.trace_3d  #這是原本0~256邊界的
+    #print("調整前")
+    #print(value_3d)
+    
+    # Call inverse_export_to_robot to adjust the result.trace_3d
+    ret = result.export_to_robot()
+    print(ret)
+    exit()
+    output_file = "output.txt"
+    min = 1000
+    for item in value_3d:
+        data_3D_rounded = [round(value, 4) for value in item]
+        if int(data_3D_rounded[2]) < min:
+            min = int(data_3D_rounded[2])
+    last_add = 173 - min
+    with open(output_file, "w") as file:
+        for item in value_3d:
+            data_3D_rounded = [round(value, 4) for value in item]
+            data_3D_rounded[2] += last_add
+            formatted_item = " ".join(map(str, data_3D_rounded))
+            output_line = f"movl 0 {formatted_item} -180 0 40 100.0000 stroke1"
+            file.write(output_line + "\n")
+    print("File writing completed.")
+
+
