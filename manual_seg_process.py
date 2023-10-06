@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 from base64 import urlsafe_b64encode, urlsafe_b64decode
@@ -9,7 +10,7 @@ RAW_DIR = "./datasets/stroke-raw"
 OUTPUT_DIR = "./datasets/stroke"
 
 # % 123 %
-filename_pattern = re.compile(r".*?(\d+).*?")
+filename_pattern = re.compile(r".*\/tmp1_(\d+)\.jpg")
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
@@ -27,15 +28,10 @@ for file in os.listdir(RAW_DIR):
         print("corrupted data: ", file)
         continue
 
-    # if either reg or style stroke dir contains sub dir, enter it
-    if len(os.listdir(reg_stroke_dir)) == 1:
-        reg_stroke_dir = os.path.join(reg_stroke_dir, os.listdir(reg_stroke_dir)[0])
-    if len(os.listdir(style_stroke_dir)) == 1:
-        style_stroke_dir = os.path.join(style_stroke_dir, os.listdir(style_stroke_dir)[0])
 
     # read all images from both reg_stroke and style_stroke, crop and save with number-index name
-    reg_it = iter(sorted(os.listdir(reg_stroke_dir)))
-    style_it = iter(sorted(os.listdir(style_stroke_dir)))
+    reg_it = iter(sorted(glob.glob(os.path.join(reg_stroke_dir, "tmp1_*.jpg"))))
+    style_it = iter(sorted(glob.glob(os.path.join(style_stroke_dir, "tmp1_*.jpg"))))
     while True:
         try:
             reg_img_file = next(reg_it)
@@ -64,14 +60,22 @@ for file in os.listdir(RAW_DIR):
 
         for i, img_file in enumerate(img_files):
             # opencv cannot deal with unicode path, so read it as binary and convert to numpy array
-            with open(os.path.join(RAW_DIR, file, "reg_stroke", img_file), "rb") as f:
+            with open(img_file, "rb") as f:
                 img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR)
 
+            img_bak = img.copy()
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             th = cv2.threshold(img.copy(), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-            coords = cv2.findNonZero(th)
+            # coords = cv2.findNonZero(th)
+            cnts = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # use the largest contour
+            coords = max(cnts[0], key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(coords)
 
             img = img[y - 5:y + h + 5, x - 5:x + w + 5]
+            if img.shape[0] == 0 or img.shape[1] == 0:
+                print("corrupted data: ", file)
+                continue
+            cv2.imwrite(os.path.join(encoded_char_dir, f"s{i}_{reg_stroke_idx}_crop.png"), img)
+            cv2.imwrite(os.path.join(encoded_char_dir, f"s{i}_{reg_stroke_idx}_full.png"), img_bak)
 
-            cv2.imwrite(os.path.join(encoded_char_dir, f"s{i}_{reg_stroke_idx}.png"), img)

@@ -1,8 +1,226 @@
 import math
 import cv2
+import matplotlib
+from matplotlib import pyplot as plt
 from torch import Tensor, nn
 import torch
 from torchvision import models
+
+
+class FE_HeadModule(nn.Module):
+    def __init__(self):
+        super(FE_HeadModule, self).__init__()
+        n_filters = [1, 64, 128, 256, 256, 512]
+        self.conv_layers = nn.ModuleList()
+        for i in range(len(n_filters) - 1):
+            self.conv_layers.append(
+                nn.Conv2d(n_filters[i], n_filters[i + 1], 3, padding=1))
+            self.conv_layers.append(nn.Dropout(0.5))
+            self.conv_layers.append(nn.ReLU())
+            self.conv_layers.append(
+                nn.Conv2d(n_filters[i+1], n_filters[i + 1], 3, padding=1))
+            self.conv_layers.append(nn.Dropout(0.5))
+            self.conv_layers.append(nn.LeakyReLU())
+            self.conv_layers.append(nn.MaxPool2d(2))
+
+    def forward(self, x):
+        for layer in self.conv_layers:
+            x = layer(x)
+        return x  # 256x256 -> 8x8
+
+
+class FE_TailModule(nn.Module):
+    def __init__(self):
+        super(FE_TailModule, self).__init__()
+        n_filters = [512, 512, 512, 512]
+        self.conv_layers = nn.ModuleList()
+        for i in range(len(n_filters) - 1):
+            self.conv_layers.append(
+                nn.Conv2d(n_filters[i], n_filters[i+1], 3, padding=1))
+            self.conv_layers.append(nn.Dropout(0.5))
+            self.conv_layers.append(nn.ReLU())
+            self.conv_layers.append(
+                nn.Conv2d(n_filters[i+1], n_filters[i+1], 3, padding=1))
+            self.conv_layers.append(nn.Dropout(0.5))
+            self.conv_layers.append(nn.ReLU())
+            self.conv_layers.append(nn.MaxPool2d(2))
+
+    def forward(self, x):
+        for layer in self.conv_layers:
+            x = layer(x)
+        return x  # 16x16 -> 2x2x512
+
+
+class VGGBasedEncoder(nn.Module):
+    def __init__(self):
+        super(VGGBasedEncoder, self).__init__()
+        self.inp_adjust = nn.Sequential(
+            nn.Conv2d(1, 3, 3, padding=1),
+            nn.BatchNorm2d(3),
+            nn.Dropout(0.5),
+            nn.ReLU(),
+        )
+        self.encoder = models.vgg16_bn(weights=None)
+        self.encoder.classifier = nn.Sequential(
+            nn.Tanh(),
+        )
+
+    def forward(self, x):
+        x = torch.reshape(x, (-1, 1, 256, 256))
+        # resize to 224x224
+        x = nn.functional.interpolate(x, size=224)
+        x = self.inp_adjust(x)
+        x = self.encoder(x)
+        return x
+
+
+class StrokeSingleAttn(nn.Module):
+    def __init__(self):
+        super(StrokeSingleAttn, self).__init__()
+        self.full_img_encoder = FE_HeadModule()
+        self.stroke_encoder = FE_HeadModule()
+        self.attn = nn.MultiheadAttention(embed_dim=512, num_heads=4, batch_first=True)
+        self.query = nn.Conv2d(512, 512, 3, padding=1)
+        self.key = nn.Conv2d(512, 512, 3, padding=1)
+        self.value = nn.Conv2d(512, 512, 3, padding=1)
+
+        self.out = nn.Sequential(
+            FE_TailModule(),
+            nn.Flatten(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 6),
+        )
+
+    def forward(self, x, full_img, return_attn=False):
+        x = torch.reshape(x, (-1, 1, 256, 256))
+        full_img = torch.reshape(full_img, (-1, 1, 256, 256))
+
+        x = self.stroke_encoder(x)
+        f = self.full_img_encoder(full_img)
+        # divide 4096 into 16 time steps of 512
+        q = self.query(x)
+        k = self.key(x)
+        v = x
+        q = q.reshape(-1, 8*8, 512)
+        k = k.reshape(-1, 8*8, 512)
+        v = v.reshape(-1, 8*8, 512)
+
+        attn_output, attn_output_weights = self.attn(q, k, v)
+        attn_output = attn_output.reshape(-1, 512, 8, 8)
+        x = attn_output
+        x = self.out(x) + torch.tensor([[0.8327963,  0.05671397, 0.04100104,
+                                         0.02160976, 0.8883327,  0.0242271]]).to(x.device)
+        # print(x.shape)
+        if return_attn:
+            return x, attn_output_weights
+        return x
+
+
+class StrokeSingleVGG(nn.Module):
+    def __init__(self, img_size=256):
+        super(StrokeSingleVGG, self).__init__()
+        self.inp_adjust = nn.Sequential(
+            nn.Conv2d(1, 3, 3, padding=1),
+            nn.BatchNorm2d(3),
+            nn.Dropout(0.5),
+            nn.ReLU(),
+        )
+        # self.res18 = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        self.vgg = models.vgg16_bn(weights=None)
+        self.vgg.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(4096, 6),
+            # nn.Tanh(),
+        )
+
+    def forward(self, x, full_img=None):
+        x = torch.reshape(x, (-1, 1, 256, 256))
+        # full_img = torch.reshape(full_img, (-1, 1, 256, 256))
+        # resize to 224x224
+        # full_img = nn.functional.interpolate(full_img, size=224)
+        x = nn.functional.interpolate(x, size=224)
+
+        # concat full_img and x
+        # x = torch.cat((full_img, x), dim=1)
+        x = self.inp_adjust(x)
+        x = self.vgg(x)
+        return x
+
+
+class StrokeSingleRes18(nn.Module):
+    def __init__(self, img_size=256):
+        super(StrokeSingleRes18, self).__init__()
+        self.inp_adjust = nn.Sequential(
+            nn.Conv2d(2, 3, 3, padding=1),
+            nn.BatchNorm2d(3),
+            nn.Dropout(0.5),
+            nn.ReLU(),
+        )
+        # self.res18 = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        self.res18 = models.resnet18(weights=None)
+        self.res18.fc = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 6),
+            # nn.Tanh(),
+        )
+
+    def forward(self, x, full_img=None):
+        x = torch.reshape(x, (-1, 1, 256, 256))
+        full_img = torch.reshape(full_img, (-1, 1, 256, 256))
+        # concat full_img and x
+        x = torch.cat((full_img, x), dim=1)
+        x = self.inp_adjust(x)
+        x = self.res18(x)
+        return x
+
+
+class StrokeSingleNet(nn.Module):
+    def __init__(self, image_size=256):
+        super(StrokeSingleNet, self).__init__()
+        n_filters = [1, 64, 128, 256, 256, 512, 512, 512]
+        self.conv_layers = nn.ModuleList()
+        for i in range(len(n_filters) - 1):
+            self.conv_layers.append(
+                nn.Conv2d(n_filters[i], n_filters[i + 1], 3, padding=1))
+            self.conv_layers.append(nn.BatchNorm2d(n_filters[i + 1]))
+            self.conv_layers.append(nn.Dropout(0.5))
+            self.conv_layers.append(nn.ReLU())
+            self.conv_layers.append(nn.MaxPool2d(2))
+
+        n_feats = n_filters[-1] * (image_size // (2 ** (len(n_filters) - 1))) ** 2
+        self.flatten = nn.Flatten()
+        self.fc_layers = nn.Sequential(
+            nn.Linear(n_feats, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+        )
+        self.output = nn.Linear(1024, 6)
+
+    def forward(self, x, full_img=None):
+        # full_img = torch.reshape(full_img, (-1, 1, 256, 256))
+        x = torch.reshape(x, (-1, 1, 256, 256))
+        # # concat full_img and x
+        # x = torch.cat((full_img, x), dim=1)
+        for layer in self.conv_layers:
+            x = layer(x)
+        x = self.flatten(x)
+        x = self.fc_layers(x)
+        x = self.output(x)
+        return x
 
 
 class DNN(nn.Module):

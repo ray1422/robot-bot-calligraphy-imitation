@@ -27,7 +27,7 @@ def train():
     # criterion = nn.MSELoss()
     def criterion(x, y): return torch.square(x - y)
     lr = 1e-4
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-3)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-5)
     writer = SummaryWriter(
         "./logs/{}".format(time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())))
     global_step = 0
