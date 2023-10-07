@@ -1,3 +1,8 @@
+"""
+(c) 2023 by Ray Chung. All rights reserved.
+Thanks to Otis Chung for the help on solving the affine matrix from pytorch to warp.
+"""
+
 import cv2
 import numpy as np
 import torch
@@ -14,7 +19,6 @@ def affine_pytorch2warp(theta, width, height):
     mat_a = np.linalg.pinv(s)
     mat_b = np.linalg.pinv(theta)
     mat_c = s
-    
 
     mat = mat_a @ mat_b @ mat_c
 
